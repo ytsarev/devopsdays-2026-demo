@@ -163,15 +163,40 @@ nudge() { k annotate cache "${CACHE}" -n "${NS}" --overwrite "${A}/nudge=$(date 
 watching_none()   { [[ "$(k get watchoperation remediate-caches -o jsonpath='{.status.watchingResources}' 2>/dev/null)" =~ ^0?$ ]]; }
 fence_rejected()  { [[ -n "$(fence_events Warning | head -1)" ]]; }
 
-# Conditions as aligned, colored rows: TYPE STATUS MESSAGE.
-show_conditions() {
-  cache_json | jq -r '.status.conditions[]? | select(.type=="Ready" or .type=="CostCenterResolved")
-      | [.type, .status, (.message // .reason // "")] | @tsv' |
-  while IFS=$'\t' read -r typ st msg; do
-    local c="${RED}"; [[ "${st}" == "True" ]] && c="${GREEN}"
-    printf "  %-22s %s%-6s%s" "${typ}" "${c}" "${st}" "${RESET}"
-    echo "${msg}" | fold -s -w 40 | sed '2,$s/^/                               /'
-  done
+# kubectl-style YAML views ----------------------------------------------------
+# What each beat shows of `kubectl get cache -o yaml`, as yq expressions.
+YQ_SPEC_STATUS='{"spec": {"parameters": .spec.parameters},
+  "status": {"conditions": [.status.conditions[] | select(.type == "CostCenterResolved" or .type == "Ready")
+    | pick(["type", "status", "reason", "message"]) | del(.[] | select(. == null))]}}'
+YQ_DIAGNOSED='{"metadata": {"annotations": (.metadata.annotations | with_entries(select(.key | test("/(diagnosis|last-diagnosed)$"))))},
+  "spec": {"parameters": .spec.parameters}}'
+YQ_LABELS='{"metadata": {"labels": .metadata.labels}}'
+YQ_PATCHED='{"metadata": {"labels": .metadata.labels,
+    "annotations": (.metadata.annotations | with_entries(select(.key | test("/auto-remediated$"))))},
+  "spec": {"parameters": .spec.parameters}}'
+# Long strings as folded blocks, so yaml_view can wrap them.
+YQ_FOLD='(.. | select(tag == "!!str" and length > 50)) style="folded"'
+
+# Wrap folded YAML text at word boundaries (still the same YAML) and color keys.
+yaml_view() {
+  awk -v w=68 '
+    length($0) <= w || $0 ~ /^ *(- )?[^ ]+:( |$)/ { print; next }
+    {
+      match($0, /^ */); ind = substr($0, 1, RLENGTH); n = split(substr($0, RLENGTH + 1), word, " ")
+      line = ""
+      for (i = 1; i <= n; i++) {
+        if (line != "" && length(ind line " " word[i]) > w) { print ind line; line = "" }
+        line = (line == "") ? word[i] : line " " word[i]
+      }
+      print ind line
+    }' | sed -E "s/^( *)(- )?([A-Za-z0-9._/-]+):( |\$)/\1\2${CYAN}\3${RESET}:\4/"
+}
+
+# `kubectl get cache -o yaml`, trimmed to the fields a beat is about.
+show_yaml() {
+  echo_cmd "kubectl get cache ${CACHE} -o yaml"
+  k get cache "${CACHE}" -n "${NS}" -o yaml | yq "$1 | ${YQ_FOLD}" | yaml_view
+  note "(showing $2)"
 }
 
 # The fence's verdicts, as events on the Cache. Optional type filter.
@@ -426,9 +451,10 @@ beat_stuck() {
   kshow get cache "${CACHE}"
   echo
   pause
-  beat "Why? The controller's conditions"
-  show_conditions
+  beat "Why? What was asked for, and what the controller says"
+  show_yaml "${YQ_SPEC_STATUS}" "spec.parameters and two conditions"
   echo
+  pause
   beat "Events, raw"
   echo_cmd "kubectl events --for cache/${CACHE}"
   k events -n "${NS}" --for "cache/${CACHE}" -o json | jq -r '.items | map(select(.type=="Warning")) | .[-1:][] | [.type, .reason, .message] | @tsv' |
@@ -451,15 +477,13 @@ beat_explain() {
     return 1
   fi
   echo
-  beat "What the AI wrote ${DIM}(annotation ${A}/diagnosis)${RESET}"
-  echo -n "${YELLOW}"; ann diagnosis | wrap; echo -n "${RESET}"
+  beat "What the AI wrote, in the object itself"
+  show_yaml "${YQ_DIAGNOSED}" "the diagnosis annotations and spec.parameters"
   echo
+  pause
   beat "What the deterministic steps decided ${DIM}(per Operation)${RESET}"
   show_verdicts diagnose-caches 3
-  echo
-  beat "Nothing else changed"
-  kshow get cache "${CACHE}"
-  punchline "AI reasons and explains. It wrote an annotation, nothing more."
+  punchline "AI reasons and explains. It wrote an annotation; the spec is untouched."
 }
 
 beat_consent() {
@@ -468,8 +492,9 @@ beat_consent() {
   say "The remediation controller only watches Caches with that label. Without it, it can't even run."
   kshow label cache "${CACHE}" "${CONSENT}=true"
   echo
+  show_yaml "${YQ_LABELS}" "metadata.labels"
+  echo
   note "remediate-caches only watches Caches with ${CONSENT}=true:"
-  sleep 1
   show_watchops
   punchline "Consent is a label in the API, not a sentence in a prompt."
 }
@@ -488,7 +513,7 @@ beat_patch() {
   fence_events Normal | tail -1 | while IFS=$'\t' read -r t r m; do echo "  ${GREEN}${r}${RESET}"; echo "${m}" | wrap; done
   echo
   beat "Desired state, patched"
-  echo "  spec.parameters.costCenter  ${RED}CC-4171${RESET} → ${GREEN}$(cache_json | jq -r .spec.parameters.costCenter)${RESET}"
+  show_yaml "${YQ_PATCHED}" "labels, the auto-remediated annotation and spec.parameters"
   echo
   pause
   beat "One Cache, three writers"
@@ -504,7 +529,11 @@ beat_reconcile() {
   echo
   kshow get cache "${CACHE}"
   echo
-  show_conditions
+  beat "What the composition rendered"
+  echo_cmd "crossplane resource trace cache/${CACHE}"
+  # Piped: on a TTY the CLI queries the terminal's colors and the reply leaks
+  # into the next ENTER prompt.
+  KUBECONFIG="${KCFG}" crossplane resource trace "cache/${CACHE}" -n "${NS}" | cat
   echo
   pause
   beat "A real cache, on this laptop"

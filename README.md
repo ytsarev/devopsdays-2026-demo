@@ -26,14 +26,16 @@ Then turn Wi-Fi off and run `./demo.sh` once more. Leave colima and the cluster 
 
 | Beat | What you see | What happens |
 |---|---|---|
-| 1 · Stuck | `READY False`, the condition, the raw Warning event, the cost centers that exist | `demo-stuck` is billed to `costCenter: CC-4171`, a digit swap of payments' `CC-4711`. No valid cost center, no infrastructure: the composition finds no CostCenter, composes nothing and keeps the Cache not Ready. |
-| 2 · Explain | the AI's diagnosis, the fence verdict, unchanged spec | `diagnose-caches` (WatchOperation): gate → function-openai → fence. The fence lets only the diagnosis annotation through. |
-| 3 · Consent | `kubectl label … allow-auto-remediation=true`; `remediate-caches` now watches 1 Cache | The gate is a label selector on the WatchOperation. |
-| 4 · Patch | the fence's approval, `costCenter CC-4171 → CC-4711`, who wrote which fields | `remediate-caches`: the AI proposes `costCenter`; the fence checks consent, the diagnosis and the registry, then applies one field. The writers view is read from `metadata.managedFields`. |
-| 5 · Reconcile | `READY True`, the conditions, `valkey-cli ping` → `PONG` | The composition resolves CC-4711 and renders ConfigMap + Deployment + Service (a real Valkey labelled with its cost center; the image is preloaded). |
+| 1 · Stuck | `READY False`; `kubectl get cache -o yaml` with the spec and the conditions; the raw Warning event; `kubectl get costcenters` | `demo-stuck` is billed to `costCenter: CC-4171`, a digit swap of payments' `CC-4711`. No valid cost center, no infrastructure: the composition finds no CostCenter, composes nothing and keeps the Cache not Ready. |
+| 2 · Explain | the AI's diagnosis as an annotation in `kubectl get cache -o yaml`, next to the unchanged spec; the fence verdict | `diagnose-caches` (WatchOperation): gate → function-openai → fence. The fence lets only the diagnosis annotation through. |
+| 3 · Consent | `kubectl label … allow-auto-remediation=true`; the label in `metadata.labels`; `remediate-caches` now watches 1 Cache | The gate is a label selector on the WatchOperation. |
+| 4 · Patch | the fence's approval; `kubectl get cache -o yaml` with the label, the `auto-remediated` annotation and `costCenter: CC-4711`; who wrote which fields | `remediate-caches`: the AI proposes `costCenter`; the fence checks consent, the diagnosis and the registry, then applies one field. The writers view is read from `metadata.managedFields`. |
+| 5 · Reconcile | `READY True`; `crossplane resource trace` (Cache → Deployment, ConfigMap, Service); `valkey-cli ping` → `PONG` | The composition resolves CC-4711 and renders ConfigMap + Deployment + Service (a real Valkey labelled with its cost center; the image is preloaded). |
 | Off switch | label removed; `get caches -l allow-auto-remediation=true` finds nothing | Revoking consent is one label. |
 
 Each beat also runs on its own: `./demo.sh stuck|explain|consent|patch|reconcile|off`. `consent` runs beats 3 and 4. For Q&A, `./demo.sh fence` shows the schema rejecting `CC-12`, then three bad proposals (a `sku` change, an unknown `CC-9999`, a rewrite of the model's Secret) rejected by the same fence code.
+
+The `kubectl get cache -o yaml` views are the real objects, trimmed with `yq` to the fields the beat is about; each one says what it shows. Long values are wrapped as folded YAML so they stay readable at a large font.
 
 Flags: `--notes` prints your speaker lines on screen, and `--auto SECS` replaces ENTER with a sleep, for recordings.
 
