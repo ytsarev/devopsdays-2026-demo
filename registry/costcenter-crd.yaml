@@ -1,43 +1,38 @@
-# A tiny stand-in for cloud resource groups: a cluster-scoped registry.
+# A tiny stand-in for the finance system: a cluster-scoped registry of cost centers.
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
-  name: resourcegroups.registry.demo.example.org
+  name: costcenters.registry.demo.example.org
 spec:
   group: registry.demo.example.org
   names:
-    kind: ResourceGroup
-    listKind: ResourceGroupList
-    plural: resourcegroups
-    singular: resourcegroup
-    shortNames: [rg]
+    kind: CostCenter
+    listKind: CostCenterList
+    plural: costcenters
+    singular: costcenter
+    shortNames: [cc]
   scope: Cluster
   versions:
   - name: v1alpha1
     served: true
     storage: true
     additionalPrinterColumns:
-    - name: ARD-ID
+    - name: CODE
       type: string
-      jsonPath: .spec.ardId
+      jsonPath: .spec.code
     - name: OWNER
       type: string
       jsonPath: .spec.owner
-    - name: REGION
-      type: string
-      jsonPath: .spec.region
     schema:
       openAPIV3Schema:
         type: object
         properties:
           spec:
             type: object
-            required: [ardId, owner, region]
+            required: [code, owner]
             properties:
-              ardId:
+              code:
                 type: string
-                pattern: '^ARD-[0-9]{3}$'
+                pattern: '^CC-[0-9]{4}$'
               owner:
-                type: string
-              region:
                 type: string

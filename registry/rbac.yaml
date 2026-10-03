@@ -1,14 +1,14 @@
-# Crossplane reads ResourceGroups as required resources (composition and
-# operations) and watches them so a new group re-reconciles affected Caches.
-# ConfigMaps, Deployments, Services, Events and the Cache XR itself are already
-# covered by Crossplane's default ClusterRole and the RBAC manager.
+# Crossplane reads CostCenters as required resources (composition and
+# operations) and watches them so a new cost center re-reconciles affected
+# Caches. ConfigMaps, Deployments, Services, Events and the Cache XR itself are
+# already covered by Crossplane's default ClusterRole and the RBAC manager.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: crossplane:read-resourcegroups
+  name: crossplane:read-costcenters
   labels:
     rbac.crossplane.io/aggregate-to-crossplane: "true"
 rules:
 - apiGroups: [registry.demo.example.org]
-  resources: [resourcegroups]
+  resources: [costcenters]
   verbs: [get, list, watch]

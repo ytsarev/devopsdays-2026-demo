@@ -48,9 +48,9 @@ spec:
               Diagnose it using only facts in the resource:
               - spec.parameters: what the user asked for
               - status.conditions: what the controller reports
-              - status.resourceGroup.known: the resource groups that exist, with owner and region
+              - status.costCenter.known: the cost centers that exist, with their owner
 
-              Write at most two short sentences, 45 words in total. If the cache is not Ready, state the root cause and the single value that was most likely intended, and why: compare spec.parameters.application with the owner of each known group, and the current value with each known ardId. If it is Ready, say it is healthy and which resource group it uses.
+              Write at most two short sentences, 45 words in total. If the cache is not Ready, state the root cause and the single value that was most likely intended, and why: compare spec.parameters.application with the owner of each known cost center, and the current value with each known code. If it is Ready, say it is healthy and which cost center it is billed to.
 
               Reply with exactly this JSON, replacing NAME, NAMESPACE and DIAGNOSIS:
               {"apiVersion": "cache.demo.example.org/v1alpha1", "kind": "Cache", "metadata": {"name": "NAME", "namespace": "NAMESPACE", "annotations": {"cache.demo.example.org/diagnosis": "DIAGNOSIS"}}}

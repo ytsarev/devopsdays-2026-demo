@@ -15,9 +15,9 @@ spec:
       name: function-python
     requirements:
       requiredResources:
-      - requirementName: resource-groups
+      - requirementName: cost-centers
         apiVersion: registry.demo.example.org/v1alpha1
-        kind: ResourceGroup
+        kind: CostCenter
     input:
       apiVersion: python.fn.crossplane.io/v1beta1
       kind: Script

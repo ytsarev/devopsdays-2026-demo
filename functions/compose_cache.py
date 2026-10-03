@@ -1,4 +1,6 @@
-"""Composition logic for Cache: resolve the ResourceGroup, then compose a local Valkey.
+"""Composition logic for Cache: resolve the cost center, then compose a local Valkey.
+
+No valid cost center, no infrastructure.
 
 Runs inside function-python. demo.sh injects this file into the Composition.
 """
@@ -6,8 +8,8 @@ Runs inside function-python. demo.sh injects this file into the Composition.
 from crossplane.function import request, resource, response
 from crossplane.function.proto.v1 import run_function_pb2 as fnv1
 
-# Declared as a step requirement in the Composition: every ResourceGroup.
-GROUPS = "resource-groups"
+# Declared as a step requirement in the Composition: every CostCenter.
+COST_CENTERS = "cost-centers"
 
 VALKEY_IMAGE = "valkey/valkey:9.1.2-alpine"
 MAXMEMORY = {"xs": "16mb", "s": "64mb", "m": "128mb", "l": "256mb", "xl": "512mb"}
@@ -18,54 +20,50 @@ def compose(req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse):
     name = xr["metadata"]["name"]
     namespace = xr["metadata"]["namespace"]
     params = xr["spec"]["parameters"]
-    ard_id = params["ardId"]
+    code = params["costCenter"]
 
-    groups = request.get_required_resources(req, GROUPS)
     known = sorted(
-        (
-            {"ardId": g["spec"]["ardId"], "owner": g["spec"]["owner"], "region": g["spec"]["region"]}
-            for g in groups
-        ),
-        key=lambda g: g["ardId"],
+        ({"code": c["spec"]["code"], "owner": c["spec"]["owner"]} for c in request.get_required_resources(req, COST_CENTERS)),
+        key=lambda c: c["code"],
     )
-    match = next((g for g in known if g["ardId"] == ard_id), None)
+    match = next((c for c in known if c["code"] == code), None)
 
-    status = {"resourceGroup": {"ardId": ard_id, "found": match is not None, "known": known}}
+    status = {"costCenter": {"code": code, "found": match is not None, "known": known}}
 
     if match is None:
-        # Nothing to place the cache in. Compose nothing, say why, and stay not
+        # Nothing to bill the cache to. Compose nothing, say why, and stay not
         # Ready: with zero composed resources Crossplane would otherwise report
         # the XR as Ready.
-        msg = f"No ResourceGroup matches ardId {ard_id}"
+        msg = f"No CostCenter matches {code}"
         rsp.desired.composite.ready = fnv1.READY_FALSE
         response.set_conditions(
             rsp,
             resource.Condition(
-                typ="ResourceGroupResolved",
+                typ="CostCenterResolved",
                 status="False",
                 reason="NotFound",
-                message=f"{msg}. Known: {', '.join(g['ardId'] for g in known) or 'none'}",
+                message=f"{msg}. Known: {', '.join(c['code'] for c in known) or 'none'}",
             ),
         )
         response.warning(rsp, msg)
-        rsp.results[-1].reason = "ResourceGroupNotFound"
+        rsp.results[-1].reason = "CostCenterNotFound"
         resource.update(rsp.desired.composite, {"status": status})
         return
 
     response.set_conditions(
         rsp,
         resource.Condition(
-            typ="ResourceGroupResolved",
+            typ="CostCenterResolved",
             status="True",
             reason="Found",
-            message=f"Placed in {ard_id} (owner {match['owner']}, region {match['region']})",
+            message=f"Billed to {code} (owner {match['owner']})",
         ),
     )
 
     labels = {
         "app.kubernetes.io/name": "valkey",
         "app.kubernetes.io/instance": name,
-        "cache.demo.example.org/ard-id": ard_id,
+        "cache.demo.example.org/cost-center": code,
     }
 
     desired = {

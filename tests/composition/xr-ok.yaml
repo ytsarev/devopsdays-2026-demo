@@ -1,4 +1,4 @@
-# The stuck cache: a digit swap in ardId (ARD-010 instead of ARD-001).
+# A healthy cache: billed to a cost center that exists.
 apiVersion: cache.demo.example.org/v1alpha1
 kind: Cache
 metadata:
@@ -7,5 +7,5 @@ metadata:
 spec:
   parameters:
     application: payments-api
-    ardId: ARD-001
+    costCenter: CC-4711
     sku: s

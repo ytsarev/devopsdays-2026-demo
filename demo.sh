@@ -147,7 +147,7 @@ cond() { cache_json | jq -r --arg t "$1" '.status.conditions[]? | select(.type==
 has_diagnosis()   { [[ -n "$(ann diagnosis)" ]]; }
 has_remediation() { [[ -n "$(ann auto-remediated)" ]]; }
 is_ready()        { [[ "$(cond Ready)" == "True" ]]; }
-has_status()      { [[ -n "$(cond ResourceGroupResolved)" ]]; }
+has_status()      { [[ -n "$(cond CostCenterResolved)" ]]; }
 
 # True once the Cache's resourceVersion has not changed for 2 seconds.
 LAST_RV=""; QUIET_SINCE=0
@@ -165,7 +165,7 @@ fence_rejected()  { [[ -n "$(fence_events Warning | head -1)" ]]; }
 
 # Conditions as aligned, colored rows: TYPE STATUS MESSAGE.
 show_conditions() {
-  cache_json | jq -r '.status.conditions[]? | select(.type=="Ready" or .type=="ResourceGroupResolved")
+  cache_json | jq -r '.status.conditions[]? | select(.type=="Ready" or .type=="CostCenterResolved")
       | [.type, .status, (.message // .reason // "")] | @tsv' |
   while IFS=$'\t' read -r typ st msg; do
     local c="${RED}"; [[ "${st}" == "True" ]] && c="${GREEN}"
@@ -349,10 +349,10 @@ cmd_up() {
 
   beat "APIs, registry, composition"
   cmd_build
-  k apply -f "${DIR}/registry/resourcegroup-crd.yaml" -f "${DIR}/registry/rbac.yaml" -f "${DIR}/apis/cache/definition.yaml" >/dev/null
-  k wait crd/resourcegroups.registry.demo.example.org --for=condition=Established --timeout=60s >/dev/null
+  k apply -f "${DIR}/registry/costcenter-crd.yaml" -f "${DIR}/registry/rbac.yaml" -f "${DIR}/apis/cache/definition.yaml" >/dev/null
+  k wait crd/costcenters.registry.demo.example.org --for=condition=Established --timeout=60s >/dev/null
   k wait xrd/caches.cache.demo.example.org --for=condition=Established --timeout=120s >/dev/null
-  k apply -f "${DIR}/registry/resourcegroups.yaml" -f "${BUILD}/composition.yaml" >/dev/null
+  k apply -f "${DIR}/registry/costcenters.yaml" -f "${BUILD}/composition.yaml" >/dev/null
 
   beat "Cluster -> Ollama on this Mac"
   sed "s/\${HOST_IP}/$(host_ip)/" "${DIR}/llm/ollama-service.yaml" | k apply -f - >/dev/null
@@ -383,7 +383,7 @@ cmd_reset() {
   cmd_build
   k apply -f "${BUILD}/diagnose-caches.yaml" -f "${BUILD}/remediate-caches.yaml" >/dev/null
   model_loaded || model_warm
-  ok "start state: ${CACHE} ardId=ARD-010, no label, not Ready ${DIM}($(since "${t0}")s)${RESET}"
+  ok "start state: ${CACHE} costCenter=CC-4171, no label, not Ready ${DIM}($(since "${t0}")s)${RESET}"
 }
 
 cmd_down() {
@@ -405,12 +405,12 @@ cmd_status() {
     if model_loaded; then ok "model ${MODEL} ($(model_base)) loaded on ${OLLAMA_HOST}"; else bad "model not loaded (warming...)"; model_warm && ok "model warm"; fi
   else bad "Ollama not running (./demo.sh reset starts it)"; fail=1; fi
   if docker exec "${NODE}" curl -fsS -m 3 "http://$(host_ip):11434/api/version" >/dev/null 2>&1; then ok "cluster reaches Ollama"; else bad "cluster cannot reach Ollama"; fail=1; fi
-  local ard label ready
-  ard=$(cache_json | jq -r '.spec.parameters.ardId // empty'); label=$(cache_json | jq -r --arg l "${CONSENT}" '.metadata.labels[$l] // empty'); ready=$(cond Ready)
-  if [[ "${ard}" == "ARD-010" && -z "${label}" && "${ready}" != "True" ]]; then
-    ok "start state: ${CACHE} ardId=ARD-010, no consent label, not Ready"
+  local cc label ready
+  cc=$(cache_json | jq -r '.spec.parameters.costCenter // empty'); label=$(cache_json | jq -r --arg l "${CONSENT}" '.metadata.labels[$l] // empty'); ready=$(cond Ready)
+  if [[ "${cc}" == "CC-4171" && -z "${label}" && "${ready}" != "True" ]]; then
+    ok "start state: ${CACHE} costCenter=CC-4171, no consent label, not Ready"
   else
-    bad "not at start state (ardId=${ard:-none} label=${label:-none} Ready=${ready:-none})"; fail=2
+    bad "not at start state (costCenter=${cc:-none} label=${label:-none} Ready=${ready:-none})"; fail=2
   fi
   return "${fail}"
 }
@@ -421,8 +421,8 @@ cmd_status() {
 
 beat_stuck() {
   banner "1 · Stuck"
-  say "A developer asked for a cache. It's stuck: Synced, not Ready, and an event saying no ResourceGroup matches ARD-010."
-  say "The controller knows exactly what is wrong. It has no idea what you meant, and it shouldn't guess."
+  say "A developer asked for a cache billed to cost center CC-4171. It's stuck: not Ready, and an event saying no cost center matches."
+  say "No valid cost center, no infrastructure. The controller knows what is wrong. It has no idea what you meant, and it shouldn't guess."
   kshow get cache "${CACHE}"
   echo
   pause
@@ -435,15 +435,15 @@ beat_stuck() {
     while IFS=$'\t' read -r t r m; do echo "  ${YELLOW}${t}${RESET}  ${r}"; echo "  ${m}"; done
   echo
   pause
-  beat "The resource groups that do exist"
-  kshow get resourcegroups
+  beat "The cost centers that do exist"
+  kshow get costcenters
   punchline "The controller knows what is wrong. Not what you meant."
 }
 
 beat_explain() {
   banner "2 · Explain"
   say "A WatchOperation hands this Cache to a model on this laptop. It may write one annotation, and plain Python enforces that, not the prompt."
-  say "It reads the same objects I just read: probably a digit swap, ARD-001 belongs to payments. It explained. Nothing changed."
+  say "It reads the same objects I just read: CC-4171 doesn't exist, CC-4711 belongs to payments, like payments-api. It explained. Nothing changed."
   show_watchops
   echo
   if ! wait_for 90 "AI diagnosis (local model)" has_diagnosis; then
@@ -476,7 +476,7 @@ beat_consent() {
 
 beat_patch() {
   banner "4 · Patch"
-  say "Now the AI may propose a change. The fence checks it: only ardId, only to a group that exists, only with consent."
+  say "Now the AI may propose a change. The fence checks it: only costCenter, only to a cost center that exists, only with consent."
   say "Who wrote what: I wrote spec and label, the AI one field and its notes, the controller status. One Cache, three writers."
   if ! wait_for 90 "AI proposal + fence" has_remediation; then
     fence_rejected && { beat "The fence rejected the proposal"; fence_events Warning | tail -2 | cut -f3 | wrap; }
@@ -488,7 +488,7 @@ beat_patch() {
   fence_events Normal | tail -1 | while IFS=$'\t' read -r t r m; do echo "  ${GREEN}${r}${RESET}"; echo "${m}" | wrap; done
   echo
   beat "Desired state, patched"
-  echo "  spec.parameters.ardId  ${RED}ARD-010${RESET} → ${GREEN}$(cache_json | jq -r .spec.parameters.ardId)${RESET}"
+  echo "  spec.parameters.costCenter  ${RED}CC-4171${RESET} → ${GREEN}$(cache_json | jq -r .spec.parameters.costCenter)${RESET}"
   echo
   pause
   beat "One Cache, three writers"
@@ -498,7 +498,7 @@ beat_patch() {
 
 beat_reconcile() {
   banner "5 · Reconcile"
-  say "From here it's boring on purpose: the composition finds the group, renders a real Valkey, the Cache goes Ready."
+  say "From here it's boring on purpose: the composition finds the cost center, renders a real Valkey, the Cache goes Ready."
   say "AI thinks. A human consents. The controller reconciles."
   wait_for 60 "Cache Ready" is_ready || { note "Check: crossplane resource trace cache/${CACHE}"; return 1; }
   echo
@@ -529,9 +529,9 @@ beat_off() {
 
 cmd_fence() {
   banner "Q&A · What if the AI goes rogue?"
-  beat "Guardrail 1: the schema. A malformed ardId never reaches the controller."
-  echo_cmd "kubectl patch cache ${CACHE} --type=merge -p '{\"spec\":{\"parameters\":{\"ardId\":\"ARD-1\"}}}'"
-  k patch cache "${CACHE}" -n "${NS}" --type=merge -p '{"spec":{"parameters":{"ardId":"ARD-1"}}}' 2>&1 |
+  beat "Guardrail 1: the schema. A malformed cost center never reaches the controller."
+  echo_cmd "kubectl patch cache ${CACHE} --type=merge -p '{\"spec\":{\"parameters\":{\"costCenter\":\"CC-12\"}}}'"
+  k patch cache "${CACHE}" -n "${NS}" --type=merge -p '{"spec":{"parameters":{"costCenter":"CC-12"}}}' 2>&1 |
     sed 's/^The Cache "[^"]*" is invalid: //' | wrap 64 | sed "s/^/${RED}/;s/\$/${RESET}/" || true
   echo
   pause

@@ -16,9 +16,9 @@ spec:
     served: true
     referenceable: true
     additionalPrinterColumns:
-    - name: ARD-ID
+    - name: COST-CENTER
       type: string
-      jsonPath: .spec.parameters.ardId
+      jsonPath: .spec.parameters.costCenter
     - name: SKU
       type: string
       jsonPath: .spec.parameters.sku
@@ -32,15 +32,15 @@ spec:
             properties:
               parameters:
                 type: object
-                required: [application, ardId, sku]
+                required: [application, costCenter, sku]
                 properties:
                   application:
                     type: string
                     description: Application that owns this cache.
-                  ardId:
+                  costCenter:
                     type: string
-                    description: ID of the ResourceGroup this cache is placed in.
-                    pattern: '^ARD-[0-9]{3}$'
+                    description: Cost center the cache is billed to. No valid cost center, no infrastructure.
+                    pattern: '^CC-[0-9]{4}$'
                   sku:
                     type: string
                     enum: [xs, s, m, l, xl]
@@ -50,23 +50,21 @@ spec:
               endpoint:
                 type: string
                 description: In-cluster address of the cache.
-              resourceGroup:
+              costCenter:
                 type: object
-                description: What the controller observed when resolving spec.parameters.ardId.
+                description: What the controller observed when resolving spec.parameters.costCenter.
                 properties:
-                  ardId:
+                  code:
                     type: string
                   found:
                     type: boolean
                   known:
                     type: array
-                    description: Resource groups that exist in the registry.
+                    description: Cost centers that exist in the registry.
                     items:
                       type: object
                       properties:
-                        ardId:
+                        code:
                           type: string
                         owner:
-                          type: string
-                        region:
                           type: string

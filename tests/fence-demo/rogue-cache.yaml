@@ -13,9 +13,9 @@ metadata:
   labels:
     allow-auto-remediation: "true"
   annotations:
-    cache.demo.example.org/diagnosis: "ardId ARD-010 matches no resource group; ARD-001 (owner payments) is the likely intent."
+    cache.demo.example.org/diagnosis: "No cost center matches CC-4171; CC-4711 (owner payments) is the likely intent."
 spec:
   parameters:
     application: payments-api
-    ardId: ARD-010
+    costCenter: CC-4171
     sku: s

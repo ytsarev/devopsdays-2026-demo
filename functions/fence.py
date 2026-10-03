@@ -31,20 +31,20 @@ DIAGNOSED_STATE = f"{GROUP}/diagnosed-state"
 AUTO_REMEDIATED = f"{GROUP}/auto-remediated"
 CONSENT_LABEL = "allow-auto-remediation"
 
-# Declared as a step requirement in the remediate Operation: every ResourceGroup.
-GROUPS = "resource-groups"
+# Declared as a step requirement in the remediate Operation: every CostCenter.
+COST_CENTERS = "cost-centers"
 
 # The resourceVersion of the stand-in object a WatchOperation passes when the
 # watched resource was deleted.
 DELETED = "ops.crossplane.io/synthetic-deleted"
 
-ARD_ID = re.compile(r"^ARD-[0-9]{3}$")
+COST_CENTER = re.compile(r"^CC-[0-9]{4}$")
 MAX_DIAGNOSIS = 360
 
 # What each mode may change. Paths are tuples of keys.
 ALLOWED = {
     "diagnose": {("metadata", "annotations", DIAGNOSIS)},
-    "remediate": {("spec", "parameters", "ardId")},
+    "remediate": {("spec", "parameters", "costCenter")},
 }
 
 # Never counted as a proposed change and never forwarded: the API server, the
@@ -80,14 +80,14 @@ def state(obj: dict) -> str:
     anything worth explaining.
     """
     p = obj.get("spec", {}).get("parameters", {})
-    return f"{p.get('ardId')}/{p.get('sku')}/{condition(obj, 'ResourceGroupResolved')}/{condition(obj, 'Ready')}"
+    return f"{p.get('costCenter')}/{p.get('sku')}/{condition(obj, 'CostCenterResolved')}/{condition(obj, 'Ready')}"
 
 
 def gate(mode: str, req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse):
     """First step: is there anything new for the model? If not, stop here."""
     watched = request.get_watched_resource(req)
-    groups = [g["spec"]["ardId"] for g in request.get_required_resources(req, GROUPS)]
-    reason = needless(mode, watched, groups)
+    codes = [c["spec"]["code"] for c in request.get_required_resources(req, COST_CENTERS)]
+    reason = needless(mode, watched, codes)
     if reason:
         response.fatal(rsp, f"gate/{mode}: model not called: {reason}")
         return
@@ -106,18 +106,18 @@ def converging(obj: dict) -> str:
     stale before it lands, and each one costs a model call; wait for the next
     settled state instead, which arrives as a change of its own.
     """
-    want = obj.get("spec", {}).get("parameters", {}).get("ardId")
-    seen = obj.get("status", {}).get("resourceGroup", {}).get("ardId")
+    want = obj.get("spec", {}).get("parameters", {}).get("costCenter")
+    seen = obj.get("status", {}).get("costCenter", {}).get("code")
     if seen is None:
         return "controller has not reported yet"
     if seen != want:
         return f"controller still converging (status is about {seen}, spec says {want})"
-    if condition(obj, "ResourceGroupResolved") == "True" and condition(obj, "Ready") != "True":
+    if condition(obj, "CostCenterResolved") == "True" and condition(obj, "Ready") != "True":
         return "controller still converging (resources coming up)"
     return ""
 
 
-def needless(mode: str, watched: dict | None, groups: list[str]) -> str:
+def needless(mode: str, watched: dict | None, codes: list[str]) -> str:
     """Why the model need not be asked, or "" if it should be."""
     if watched is None:
         return "no watched resource"
@@ -132,9 +132,9 @@ def needless(mode: str, watched: dict | None, groups: list[str]) -> str:
         return f"no consent label {CONSENT_LABEL}=true"
     if not annotations(watched).get(DIAGNOSIS):
         return "no diagnosis yet: explain before acting"
-    current = watched.get("spec", {}).get("parameters", {}).get("ardId")
-    if current in groups:
-        return f"ardId {current} exists, nothing to fix"
+    current = watched.get("spec", {}).get("parameters", {}).get("costCenter")
+    if current in codes:
+        return f"cost center {current} exists, nothing to fix"
     return ""
 
 
@@ -147,9 +147,9 @@ def fence(mode: str, req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse
 
     try:
         watched = request.get_watched_resource(req)
-        groups = [g["spec"]["ardId"] for g in request.get_required_resources(req, GROUPS)]
+        codes = [c["spec"]["code"] for c in request.get_required_resources(req, COST_CENTERS)]
         seen = resource.struct_to_dict(req.context).get(SNAPSHOT, {}).get("state")
-        verdict = judge(mode, watched, proposals, groups, now, seen)
+        verdict = judge(mode, watched, proposals, codes, now, seen)
     except Exception as e:  # noqa: BLE001 - a bug in the fence must not apply anything
         verdict = Verdict("reject", f"fence error, nothing applied: {e!r}", detail=traceback.format_exc(limit=3))
         watched = None
@@ -183,7 +183,7 @@ class Verdict:
         return f"Verdict({self.kind!r}, {self.message!r})"
 
 
-def judge(mode: str, watched: dict | None, proposals: list[dict], groups: list[str], now, seen=None) -> Verdict:
+def judge(mode: str, watched: dict | None, proposals: list[dict], codes: list[str], now, seen=None) -> Verdict:
     """Decide what, if anything, to apply. Pure function: no I/O.
 
     seen is the state() the gate recorded before the AI step.
@@ -229,7 +229,7 @@ def judge(mode: str, watched: dict | None, proposals: list[dict], groups: list[s
 
     if mode == "diagnose":
         return judge_diagnosis(watched, proposal, now)
-    return judge_remediation(watched, proposal, groups, now)
+    return judge_remediation(watched, proposal, codes, now)
 
 
 def judge_diagnosis(watched: dict, proposal: dict, now) -> Verdict:
@@ -253,7 +253,7 @@ def judge_diagnosis(watched: dict, proposal: dict, now) -> Verdict:
     return Verdict("approve", "diagnosis annotations only", patch)
 
 
-def judge_remediation(watched: dict, proposal: dict, groups: list[str], now) -> Verdict:
+def judge_remediation(watched: dict, proposal: dict, codes: list[str], now) -> Verdict:
     if watched["metadata"].get("labels", {}).get(CONSENT_LABEL) != "true":
         # Not an AI misstep: the watch's label filter already excludes such
         # Caches, except for the one run triggered by removing the label.
@@ -261,22 +261,22 @@ def judge_remediation(watched: dict, proposal: dict, groups: list[str], now) -> 
     if not annotations(watched).get(DIAGNOSIS):
         return Verdict("reject", "no diagnosis recorded yet: explain before acting")
 
-    current = watched["spec"]["parameters"]["ardId"]
-    if current in groups:
-        return Verdict("skip", f"ardId {current} already exists in the registry, nothing to fix")
+    current = watched["spec"]["parameters"]["costCenter"]
+    if current in codes:
+        return Verdict("skip", f"cost center {current} already exists in the registry, nothing to fix")
 
-    proposed = proposal.get("spec", {}).get("parameters", {}).get("ardId", current)
+    proposed = proposal.get("spec", {}).get("parameters", {}).get("costCenter", current)
     if proposed == current:
         return Verdict("skip", "the model proposed no change")
-    if not isinstance(proposed, str) or not ARD_ID.match(proposed):
-        return Verdict("reject", f"ardId {proposed!r} does not match ^ARD-[0-9]{{3}}$")
-    if proposed not in groups:
-        return Verdict("reject", f"ardId {proposed} is not in the registry (known: {', '.join(sorted(groups))})")
+    if not isinstance(proposed, str) or not COST_CENTER.match(proposed):
+        return Verdict("reject", f"cost center {proposed!r} does not match ^CC-[0-9]{{4}}$")
+    if proposed not in codes:
+        return Verdict("reject", f"cost center {proposed} is not in the registry (known: {', '.join(sorted(codes))})")
 
     patch = skeleton(watched)
-    patch["spec"] = {"parameters": {"ardId": proposed}}
-    patch["metadata"]["annotations"] = {AUTO_REMEDIATED: f"{stamp(now)}: ardId {current} → {proposed}"}
-    return Verdict("approve", f"spec.parameters.ardId {current} → {proposed} (in registry, consent label present)", patch)
+    patch["spec"] = {"parameters": {"costCenter": proposed}}
+    patch["metadata"]["annotations"] = {AUTO_REMEDIATED: f"{stamp(now)}: costCenter {current} → {proposed}"}
+    return Verdict("approve", f"spec.parameters.costCenter {current} → {proposed} (in registry, consent label present)", patch)
 
 
 def diff(proposal: dict, watched: dict, path: tuple = ()) -> set[tuple]:

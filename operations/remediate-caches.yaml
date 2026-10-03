@@ -28,9 +28,9 @@ spec:
             script: '# injected from functions/fence.py with MODE = gate-remediate'
           requirements:
             requiredResources:
-              - requirementName: resource-groups
+              - requirementName: cost-centers
                 apiVersion: registry.demo.example.org/v1alpha1
-                kind: ResourceGroup
+                kind: CostCenter
         - step: think
           functionRef:
             name: function-openai
@@ -50,12 +50,12 @@ spec:
               Below is a Cache resource as JSON. In this input the sequence &#34; stands for a double quote.
 
               The annotation cache.demo.example.org/diagnosis holds an earlier diagnosis.
-              status.resourceGroup.known lists the resource groups that exist, with owner and region.
+              status.costCenter.known lists the cost centers that exist, with their owner.
 
-              If spec.parameters.ardId matches none of the known resource groups, choose the known ardId this cache was most likely meant to use. Consider spec.parameters.application, the owner of each group, and likely typos in the current value. Otherwise keep the current ardId.
+              If spec.parameters.costCenter matches none of the known cost centers, choose the known code this cache was most likely meant to be billed to. Consider spec.parameters.application, the owner of each cost center, and likely typos in the current value. Otherwise keep the current costCenter.
 
-              Reply with exactly this JSON, replacing NAME, NAMESPACE and ARDID:
-              {"apiVersion": "cache.demo.example.org/v1alpha1", "kind": "Cache", "metadata": {"name": "NAME", "namespace": "NAMESPACE"}, "spec": {"parameters": {"ardId": "ARDID"}}}
+              Reply with exactly this JSON, replacing NAME, NAMESPACE and CODE:
+              {"apiVersion": "cache.demo.example.org/v1alpha1", "kind": "Cache", "metadata": {"name": "NAME", "namespace": "NAMESPACE"}, "spec": {"parameters": {"costCenter": "CODE"}}}
 
               Cache resource:
               {{ .Resources }}
@@ -64,9 +64,9 @@ spec:
             name: function-python
           requirements:
             requiredResources:
-              - requirementName: resource-groups
+              - requirementName: cost-centers
                 apiVersion: registry.demo.example.org/v1alpha1
-                kind: ResourceGroup
+                kind: CostCenter
           input:
             apiVersion: python.fn.crossplane.io/v1beta1
             kind: Script

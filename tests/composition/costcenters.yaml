@@ -1,26 +1,23 @@
 apiVersion: registry.demo.example.org/v1alpha1
-kind: ResourceGroup
+kind: CostCenter
 metadata:
-  name: ard-001
+  name: cc-4711
 spec:
-  ardId: ARD-001
+  code: CC-4711
   owner: payments
-  region: eu-central
 ---
 apiVersion: registry.demo.example.org/v1alpha1
-kind: ResourceGroup
+kind: CostCenter
 metadata:
-  name: ard-002
+  name: cc-5200
 spec:
-  ardId: ARD-002
+  code: CC-5200
   owner: search
-  region: us-east
 ---
 apiVersion: registry.demo.example.org/v1alpha1
-kind: ResourceGroup
+kind: CostCenter
 metadata:
-  name: ard-003
+  name: cc-6300
 spec:
-  ardId: ARD-003
+  code: CC-6300
   owner: analytics
-  region: eu-west
