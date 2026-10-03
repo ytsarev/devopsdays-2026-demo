@@ -1,0 +1,8 @@
+# Crossplane v2.4.2 Helm values for the demo.
+args:
+  # Operations (Operation, CronOperation, WatchOperation) are still alpha in v2.4.
+  - --enable-operations
+packageCache:
+  # Persist package contents so a laptop restart without Wi-Fi does not
+  # force Crossplane to re-fetch packages from the registry.
+  pvc: crossplane-package-cache

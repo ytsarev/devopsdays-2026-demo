@@ -1,0 +1,7 @@
+# Downloaded tools and model weights (./demo.sh up fetches them)
+.tools/
+.models/
+# Runtime state, generated manifests, cluster credentials
+.run/
+.build/
+.kubeconfig

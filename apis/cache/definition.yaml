@@ -1,0 +1,72 @@
+# The Cache API. Guardrail #1 lives here: the schema, not a prompt.
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: caches.cache.demo.example.org
+spec:
+  group: cache.demo.example.org
+  names:
+    kind: Cache
+    plural: caches
+  scope: Namespaced
+  defaultCompositionRef:
+    name: cache
+  versions:
+  - name: v1alpha1
+    served: true
+    referenceable: true
+    additionalPrinterColumns:
+    - name: ARD-ID
+      type: string
+      jsonPath: .spec.parameters.ardId
+    - name: SKU
+      type: string
+      jsonPath: .spec.parameters.sku
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          spec:
+            type: object
+            required: [parameters]
+            properties:
+              parameters:
+                type: object
+                required: [application, ardId, sku]
+                properties:
+                  application:
+                    type: string
+                    description: Application that owns this cache.
+                  ardId:
+                    type: string
+                    description: ID of the ResourceGroup this cache is placed in.
+                    pattern: '^ARD-[0-9]{3}$'
+                  sku:
+                    type: string
+                    enum: [xs, s, m, l, xl]
+          status:
+            type: object
+            properties:
+              endpoint:
+                type: string
+                description: In-cluster address of the cache.
+              resourceGroup:
+                type: object
+                description: What the controller observed when resolving spec.parameters.ardId.
+                properties:
+                  ardId:
+                    type: string
+                  found:
+                    type: boolean
+                  known:
+                    type: array
+                    description: Resource groups that exist in the registry.
+                    items:
+                      type: object
+                      properties:
+                        ardId:
+                          type: string
+                        owner:
+                          type: string
+                        region:
+                          type: string

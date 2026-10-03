@@ -1,0 +1,26 @@
+apiVersion: registry.demo.example.org/v1alpha1
+kind: ResourceGroup
+metadata:
+  name: ard-001
+spec:
+  ardId: ARD-001
+  owner: payments
+  region: eu-central
+---
+apiVersion: registry.demo.example.org/v1alpha1
+kind: ResourceGroup
+metadata:
+  name: ard-002
+spec:
+  ardId: ARD-002
+  owner: search
+  region: us-east
+---
+apiVersion: registry.demo.example.org/v1alpha1
+kind: ResourceGroup
+metadata:
+  name: ard-003
+spec:
+  ardId: ARD-003
+  owner: analytics
+  region: eu-west

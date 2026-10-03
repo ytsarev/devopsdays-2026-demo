@@ -1,0 +1,21 @@
+# Target for `./demo.sh fence`: stuck, consented and diagnosed, in a namespace
+# the WatchOperations do not watch, so only the canned proposals reach it.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: qa
+---
+apiVersion: cache.demo.example.org/v1alpha1
+kind: Cache
+metadata:
+  name: demo-rogue
+  namespace: qa
+  labels:
+    allow-auto-remediation: "true"
+  annotations:
+    cache.demo.example.org/diagnosis: "ardId ARD-010 matches no resource group; ARD-001 (owner payments) is the likely intent."
+spec:
+  parameters:
+    application: payments-api
+    ardId: ARD-010
+    sku: s

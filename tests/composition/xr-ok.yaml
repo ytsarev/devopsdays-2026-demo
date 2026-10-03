@@ -1,0 +1,11 @@
+# The stuck cache: a digit swap in ardId (ARD-010 instead of ARD-001).
+apiVersion: cache.demo.example.org/v1alpha1
+kind: Cache
+metadata:
+  name: demo-ok
+  namespace: default
+spec:
+  parameters:
+    application: payments-api
+    ardId: ARD-001
+    sku: s

@@ -1,0 +1,32 @@
+# In-cluster name for the Ollama server running on the Mac (outside kind).
+# HOST_IP is filled in by demo.sh: the address the kind node uses to reach the
+# Mac's loopback (192.168.5.2 under colima).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: llm
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ollama
+  namespace: llm
+spec:
+  ports:
+  - name: http
+    port: 11434
+    targetPort: 11434
+---
+apiVersion: discovery.k8s.io/v1
+kind: EndpointSlice
+metadata:
+  name: ollama-host
+  namespace: llm
+  labels:
+    kubernetes.io/service-name: ollama
+addressType: IPv4
+ports:
+- name: http
+  port: 11434
+endpoints:
+- addresses: ["${HOST_IP}"]

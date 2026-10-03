@@ -1,0 +1,24 @@
+# Cache composition. The script comes from functions/compose_cache.py;
+# demo.sh injects it (see `./demo.sh build`).
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: cache
+spec:
+  compositeTypeRef:
+    apiVersion: cache.demo.example.org/v1alpha1
+    kind: Cache
+  mode: Pipeline
+  pipeline:
+  - step: compose
+    functionRef:
+      name: function-python
+    requirements:
+      requiredResources:
+      - requirementName: resource-groups
+        apiVersion: registry.demo.example.org/v1alpha1
+        kind: ResourceGroup
+    input:
+      apiVersion: python.fn.crossplane.io/v1beta1
+      kind: Script
+      script: "# injected from functions/compose_cache.py"

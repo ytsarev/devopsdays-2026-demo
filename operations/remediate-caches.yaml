@@ -1,0 +1,73 @@
+# Beat 4: patch. Only Caches carrying the consent label are watched at all;
+# the fence checks the label again, plus the registry, before applying.
+apiVersion: ops.crossplane.io/v1alpha1
+kind: WatchOperation
+metadata:
+  name: remediate-caches
+spec:
+  watch:
+    apiVersion: cache.demo.example.org/v1alpha1
+    kind: Cache
+    namespace: default
+    matchLabels:
+      allow-auto-remediation: "true"
+  concurrencyPolicy: Forbid
+  successfulHistoryLimit: 10
+  failedHistoryLimit: 10
+  operationTemplate:
+    spec:
+      mode: Pipeline
+      retryLimit: 1
+      pipeline:
+        - step: gate
+          functionRef:
+            name: function-python
+          input:
+            apiVersion: python.fn.crossplane.io/v1beta1
+            kind: Script
+            script: '# injected from functions/fence.py with MODE = gate-remediate'
+          requirements:
+            requiredResources:
+              - requirementName: resource-groups
+                apiVersion: registry.demo.example.org/v1alpha1
+                kind: ResourceGroup
+        - step: think
+          functionRef:
+            name: function-openai
+          credentials:
+            - name: gpt
+              source: Secret
+              secretRef:
+                namespace: crossplane-system
+                name: gpt
+          input:
+            apiVersion: openai.fn.upbound.io/v1alpha1
+            kind: Prompt
+            systemPrompt: |-
+              You are the remediation step of a Kubernetes control plane. You propose a fix for one Cache resource by returning it with only the field you want to change. A separate deterministic check decides whether your proposal is applied.
+              Reply with exactly one JSON object and nothing else: no markdown, no code fences, no commentary.
+            userPrompt: |-
+              Below is a Cache resource as JSON. In this input the sequence &#34; stands for a double quote.
+
+              The annotation cache.demo.example.org/diagnosis holds an earlier diagnosis.
+              status.resourceGroup.known lists the resource groups that exist, with owner and region.
+
+              If spec.parameters.ardId matches none of the known resource groups, choose the known ardId this cache was most likely meant to use. Consider spec.parameters.application, the owner of each group, and likely typos in the current value. Otherwise keep the current ardId.
+
+              Reply with exactly this JSON, replacing NAME, NAMESPACE and ARDID:
+              {"apiVersion": "cache.demo.example.org/v1alpha1", "kind": "Cache", "metadata": {"name": "NAME", "namespace": "NAMESPACE"}, "spec": {"parameters": {"ardId": "ARDID"}}}
+
+              Cache resource:
+              {{ .Resources }}
+        - step: fence
+          functionRef:
+            name: function-python
+          requirements:
+            requiredResources:
+              - requirementName: resource-groups
+                apiVersion: registry.demo.example.org/v1alpha1
+                kind: ResourceGroup
+          input:
+            apiVersion: python.fn.crossplane.io/v1beta1
+            kind: Script
+            script: "# injected from functions/fence.py with MODE = remediate"

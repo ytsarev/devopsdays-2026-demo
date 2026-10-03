@@ -1,0 +1,66 @@
+# Beat 2: explain. Runs on every Cache. The AI may only write the diagnosis
+# annotation; the fence enforces that and owns timestamps and de-duplication.
+apiVersion: ops.crossplane.io/v1alpha1
+kind: WatchOperation
+metadata:
+  name: diagnose-caches
+spec:
+  watch:
+    apiVersion: cache.demo.example.org/v1alpha1
+    kind: Cache
+    namespace: default
+  concurrencyPolicy: Forbid # one model call at a time; the gate makes skipped runs short
+  successfulHistoryLimit: 10
+  failedHistoryLimit: 10
+  operationTemplate:
+    spec:
+      mode: Pipeline
+      retryLimit: 1
+      pipeline:
+        - step: gate
+          functionRef:
+            name: function-python
+          input:
+            apiVersion: python.fn.crossplane.io/v1beta1
+            kind: Script
+            script: '# injected from functions/fence.py with MODE = gate-diagnose'
+        - step: think
+          functionRef:
+            name: function-openai
+          credentials:
+            - name: gpt
+              source: Secret
+              secretRef:
+                namespace: crossplane-system
+                name: gpt
+          input:
+            apiVersion: openai.fn.upbound.io/v1alpha1
+            kind: Prompt
+            # function-openai renders prompts with html/template: keep '<', '>'
+            # and '&' out of the prompt text, and expect quotes in .Resources to
+            # arrive as &#34;.
+            systemPrompt: |-
+              You are the diagnosis step of a Kubernetes control plane. You read one Cache resource and explain, in plain language for an on-call engineer, why it is or is not Ready. You do not fix anything.
+              Reply with exactly one JSON object and nothing else: no markdown, no code fences, no commentary.
+            userPrompt: |-
+              Below is a Cache resource as JSON. In this input the sequence &#34; stands for a double quote.
+
+              Diagnose it using only facts in the resource:
+              - spec.parameters: what the user asked for
+              - status.conditions: what the controller reports
+              - status.resourceGroup.known: the resource groups that exist, with owner and region
+
+              Write at most two short sentences, 45 words in total. If the cache is not Ready, state the root cause and the single value that was most likely intended, and why: compare spec.parameters.application with the owner of each known group, and the current value with each known ardId. If it is Ready, say it is healthy and which resource group it uses.
+
+              Reply with exactly this JSON, replacing NAME, NAMESPACE and DIAGNOSIS:
+              {"apiVersion": "cache.demo.example.org/v1alpha1", "kind": "Cache", "metadata": {"name": "NAME", "namespace": "NAMESPACE", "annotations": {"cache.demo.example.org/diagnosis": "DIAGNOSIS"}}}
+
+              Cache resource:
+              {{ .Resources }}
+        - step: fence
+          functionRef:
+            name: function-python
+          input:
+            apiVersion: python.fn.crossplane.io/v1beta1
+            kind: Script
+            script: "# injected from functions/fence.py with MODE = diagnose"

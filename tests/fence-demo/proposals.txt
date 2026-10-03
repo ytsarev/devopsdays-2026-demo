@@ -1,0 +1,3 @@
+sku: ardId → ARD-001, and sku s → xl
+registry: ardId → ARD-999
+hostile: ardId → ARD-001, plus rewrite Secret gpt
