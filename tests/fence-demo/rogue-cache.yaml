@@ -1,4 +1,4 @@
-# Target for `./demo.sh fence`: stuck, consented and diagnosed, in a namespace
+# Target for `./demo.sh fence`: stuck, approved and diagnosed, in a namespace
 # the WatchOperations do not watch, so only the canned proposals reach it.
 apiVersion: v1
 kind: Namespace

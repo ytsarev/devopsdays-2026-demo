@@ -64,7 +64,7 @@ def watched(labels=None, annotations=None, **meta):
     return w
 
 
-CONSENTED = dict(labels={"allow-auto-remediation": "true"}, annotations={DIAG: "costCenter CC-4171 does not exist."})
+APPROVED = dict(labels={"allow-auto-remediation": "true"}, annotations={DIAG: "costCenter CC-4171 does not exist."})
 
 
 def cache_patch(annotations=None, labels=None, parameters=None, **meta):
@@ -148,7 +148,7 @@ def test_diagnose_that_also_patches_cost_center_is_rejected():
     assert 'spec.parameters.costCenter' in events[0]["message"]
 
 
-def test_diagnose_that_grants_itself_consent_is_rejected():
+def test_diagnose_that_grants_itself_approval_is_rejected():
     p = cache_patch(annotations={DIAG: "ok"}, labels={"allow-auto-remediation": "true"})
     caches, events, _ = run("diagnose", watched(), [p])
     assert_nothing_applied(caches)
@@ -173,7 +173,7 @@ def test_diagnose_long_text_is_trimmed_to_one_line():
 
 
 def test_remediate_good_patch_changes_only_cost_center():
-    caches, events, msgs = run("remediate", watched(**CONSENTED), [cache_patch(parameters={"costCenter": "CC-4711"})])
+    caches, events, msgs = run("remediate", watched(**APPROVED), [cache_patch(parameters={"costCenter": "CC-4711"})])
     assert caches == [
         {
             "apiVersion": API,
@@ -193,25 +193,25 @@ def test_remediate_good_patch_changes_only_cost_center():
 def test_remediate_proposal_without_namespace_is_accepted():
     p = cache_patch(parameters={"costCenter": "CC-4711"})
     del p["metadata"]["namespace"]
-    caches, _, _ = run("remediate", watched(**CONSENTED), [p])
+    caches, _, _ = run("remediate", watched(**APPROVED), [p])
     assert caches[0]["spec"]["parameters"]["costCenter"] == "CC-4711"
 
 
 def test_remediate_that_also_changes_sku_is_rejected():
     p = cache_patch(parameters={"costCenter": "CC-4711", "sku": "xl"})
-    caches, events, _ = run("remediate", watched(**CONSENTED), [p])
+    caches, events, _ = run("remediate", watched(**APPROVED), [p])
     assert_nothing_applied(caches)
     assert "spec.parameters.sku" in events[0]["message"]
 
 
 def test_remediate_to_cost_center_not_in_registry_is_rejected():
-    caches, events, _ = run("remediate", watched(**CONSENTED), [cache_patch(parameters={"costCenter": "CC-9999"})])
+    caches, events, _ = run("remediate", watched(**APPROVED), [cache_patch(parameters={"costCenter": "CC-9999"})])
     assert_nothing_applied(caches)
     assert "not in the registry" in events[0]["message"]
 
 
 def test_remediate_to_malformed_cost_center_is_rejected():
-    caches, events, _ = run("remediate", watched(**CONSENTED), [cache_patch(parameters={"costCenter": "cc-4711; drop"})])
+    caches, events, _ = run("remediate", watched(**APPROVED), [cache_patch(parameters={"costCenter": "cc-4711; drop"})])
     assert_nothing_applied(caches)
     assert "does not match" in events[0]["message"]
 
@@ -219,7 +219,7 @@ def test_remediate_to_malformed_cost_center_is_rejected():
 def test_hostile_proposal_touching_another_resource_is_rejected():
     secret = {"apiVersion": "v1", "kind": "Secret", "metadata": {"name": "gpt", "namespace": "crossplane-system"}, "stringData": {"OPENAI_BASE_URL": "http://evil"}}
     good = cache_patch(parameters={"costCenter": "CC-4711"})
-    caches, events, _ = run("remediate", watched(**CONSENTED), [good, secret])
+    caches, events, _ = run("remediate", watched(**APPROVED), [good, secret])
     assert_nothing_applied(caches)
     assert "another resource" in events[0]["message"] and "Secret" in events[0]["message"]
 
@@ -227,17 +227,17 @@ def test_hostile_proposal_touching_another_resource_is_rejected():
 def test_hostile_proposal_for_a_different_cache_is_rejected():
     other = cache_patch(parameters={"costCenter": "CC-4711"})
     other["metadata"]["name"] = "someone-elses-cache"
-    caches, events, _ = run("remediate", watched(**CONSENTED), [other])
+    caches, events, _ = run("remediate", watched(**APPROVED), [other])
     assert_nothing_applied(caches)
     assert "someone-elses-cache" in events[0]["message"]
 
 
-def test_remediate_without_consent_label_applies_nothing():
+def test_remediate_without_approval_label_applies_nothing():
     w = watched(annotations={DIAG: "CC-4171 does not exist."})
     caches, events, msgs = run("remediate", w, [cache_patch(parameters={"costCenter": "CC-4711"})])
     assert_nothing_applied(caches)
     assert events == []
-    assert "no consent" in msgs[-1]
+    assert "not approved" in msgs[-1]
 
 
 def test_remediate_without_diagnosis_is_rejected():
@@ -248,7 +248,7 @@ def test_remediate_without_diagnosis_is_rejected():
 
 
 def test_remediate_when_cost_center_already_valid_is_a_noop():
-    w = watched(**CONSENTED)
+    w = watched(**APPROVED)
     w["spec"]["parameters"]["costCenter"] = "CC-4711"
     caches, events, msgs = run("remediate", w, [cache_patch(parameters={"costCenter": "CC-5200"})])
     assert_nothing_applied(caches)
@@ -261,7 +261,7 @@ def test_remediate_when_cost_center_already_valid_is_a_noop():
 
 @pytest.mark.parametrize("mode", ["diagnose", "remediate"])
 def test_deleted_cache_applies_nothing(mode):
-    w = watched(**CONSENTED, resourceVersion="ops.crossplane.io/synthetic-deleted")
+    w = watched(**APPROVED, resourceVersion="ops.crossplane.io/synthetic-deleted")
     caches, events, _ = run(mode, w, [cache_patch(annotations={DIAG: "x"}, parameters={"costCenter": "CC-4711"})])
     assert_nothing_applied(caches)
     assert events == []
@@ -269,7 +269,7 @@ def test_deleted_cache_applies_nothing(mode):
 
 @pytest.mark.parametrize("mode", ["diagnose", "remediate"])
 def test_empty_model_output_applies_nothing(mode):
-    caches, events, msgs = run(mode, watched(**CONSENTED), [])
+    caches, events, msgs = run(mode, watched(**APPROVED), [])
     assert_nothing_applied(caches)
     assert "no usable proposal" in msgs[-1]
 
@@ -280,7 +280,7 @@ def test_fence_bug_applies_nothing_and_does_not_fail(mode, monkeypatch):
         raise KeyError("spec")
 
     monkeypatch.setattr(fence, "judge", boom)
-    caches, events, msgs = run(mode, watched(**CONSENTED), [cache_patch(annotations={DIAG: "x"})])
+    caches, events, msgs = run(mode, watched(**APPROVED), [cache_patch(annotations={DIAG: "x"})])
     assert_nothing_applied(caches)
     assert "fence error" in msgs[-1]
 
@@ -349,7 +349,7 @@ def test_gate_asks_the_model_about_a_settled_healthy_state():
 @pytest.mark.parametrize(
     "w, reason",
     [
-        (watched(annotations={DIAG: "x"}), "no consent"),
+        (watched(annotations={DIAG: "x"}), "not approved"),
         (watched(labels={"allow-auto-remediation": "true"}), "explain before acting"),
         (None, "no watched resource"),
     ],
@@ -360,14 +360,14 @@ def test_gate_does_not_wake_the_model_for_remediation_it_may_not_do(w, reason):
 
 
 def test_gate_does_not_wake_the_model_when_nothing_is_broken():
-    w = watched(**CONSENTED)
+    w = watched(**APPROVED)
     w["spec"]["parameters"]["costCenter"] = "CC-4711"
     fatal, _, _ = run_gate("remediate", w)
     assert "nothing to fix" in fatal[0]
 
 
-def test_gate_asks_the_model_to_remediate_with_consent_and_diagnosis():
-    fatal, snap, _ = run_gate("remediate", watched(**CONSENTED))
+def test_gate_asks_the_model_to_remediate_with_approval_and_diagnosis():
+    fatal, snap, _ = run_gate("remediate", watched(**APPROVED))
     assert fatal == [] and snap == {"state": "CC-4171/s/False/False"}
 
 
@@ -387,5 +387,5 @@ def test_diagnosis_of_the_state_the_model_saw_is_applied():
 
 
 def test_remediation_is_judged_against_the_live_cache_not_the_snapshot():
-    caches, _, _ = run("remediate", watched(**CONSENTED), [cache_patch(parameters={"costCenter": "CC-4711"})], seen="something else")
+    caches, _, _ = run("remediate", watched(**APPROVED), [cache_patch(parameters={"costCenter": "CC-4711"})], seen="something else")
     assert caches[0]["spec"]["parameters"]["costCenter"] == "CC-4711"

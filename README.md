@@ -2,7 +2,7 @@
 
 Demo for the DevOpsDays Prague 2026 keynote (Monday 5 October, 09:20). It runs fully locally: a kind cluster, open-source Crossplane v2.4.2, and a local model served by Ollama on this Mac. It needs no cloud provider, no Upbound account and no internet during the demo.
 
-The AI diagnoses, a human grants consent with a label, the AI patches desired state, and a controller converges. The AI never talks to infrastructure; it only reads and writes API objects, through a deterministic fence.
+The AI diagnoses, a human approves the fix with a label, the AI patches desired state, and a controller converges. The AI never talks to infrastructure; it only reads and writes API objects, through a deterministic fence.
 
 ## Runbook
 
@@ -28,12 +28,12 @@ Then turn Wi-Fi off and run `./demo.sh` once more. Leave colima and the cluster 
 |---|---|---|
 | 1 · Stuck | `READY False`; `kubectl get cache -o yaml` with the spec and the conditions; the raw Warning event; `kubectl get costcenters` | `demo-stuck` is billed to `costCenter: CC-4171`, a digit swap of payments' `CC-4711`. No valid cost center, no infrastructure: the composition finds no CostCenter, composes nothing and keeps the Cache not Ready. |
 | 2 · Explain | the AI's diagnosis as an annotation in `kubectl get cache -o yaml`, next to the unchanged spec; the fence verdict | `diagnose-caches` (WatchOperation): gate → function-openai → fence. The fence lets only the diagnosis annotation through. |
-| 3 · Consent | `kubectl label … allow-auto-remediation=true`; the label in `metadata.labels`; `remediate-caches` now watches 1 Cache | The gate is a label selector on the WatchOperation. |
-| 4 · Patch | the fence's approval; `kubectl get cache -o yaml` with the label, the `auto-remediated` annotation and `costCenter: CC-4711`; who wrote which fields | `remediate-caches`: the AI proposes `costCenter`; the fence checks consent, the diagnosis and the registry, then applies one field. The writers view is read from `metadata.managedFields`. |
+| 3 · Approve | `remediate-caches`' `spec.watch` selector, and `kubectl get caches -l allow-auto-remediation=true` finding nothing; then `kubectl label …`, the same query finding `demo-stuck`, and `remediate-caches` watching 1 Cache | The gate is a label selector on the WatchOperation. |
+| 4 · Patch | the fence's approval; `kubectl get cache -o yaml` with the label, the `auto-remediated` annotation and `costCenter: CC-4711`; who wrote which fields | `remediate-caches`: the AI proposes `costCenter`; the fence checks the approval label, the diagnosis and the registry, then applies one field. The writers view is read from `metadata.managedFields`. |
 | 5 · Reconcile | `READY True`; `crossplane resource trace` (Cache → Deployment, ConfigMap, Service); `valkey-cli ping` → `PONG` | The composition resolves CC-4711 and renders ConfigMap + Deployment + Service (a real Valkey labelled with its cost center; the image is preloaded). |
-| Off switch | label removed; `get caches -l allow-auto-remediation=true` finds nothing | Revoking consent is one label. |
+| Off switch | label removed; `get caches -l allow-auto-remediation=true` finds nothing | Revoking approval is one label. |
 
-Each beat also runs on its own: `./demo.sh stuck|explain|consent|patch|reconcile|off`. `consent` runs beats 3 and 4. For Q&A, `./demo.sh fence` shows the schema rejecting `CC-12`, then three bad proposals (a `sku` change, an unknown `CC-9999`, a rewrite of the model's Secret) rejected by the same fence code.
+Each beat also runs on its own: `./demo.sh stuck|explain|approve|patch|reconcile|off`. `approve` runs beats 3 and 4. For Q&A, `./demo.sh fence` shows the schema rejecting `CC-12`, then three bad proposals (a `sku` change, an unknown `CC-9999`, a rewrite of the model's Secret) rejected by the same fence code.
 
 The `kubectl get cache -o yaml` views are the real objects, trimmed with `yq` to the fields the beat is about; each one says what it shows. Long values are wrapped as folded YAML so they stay readable at a large font.
 
@@ -43,15 +43,15 @@ Flags: `--notes` prints your speaker lines on screen, and `--auto SECS` replaces
 
 1. **Stuck.** "A developer asked for a cache billed to cost center CC-4171. It's stuck: not Ready, and an event saying no cost center matches." / "No valid cost center, no infrastructure. The controller knows what is wrong. It has no idea what you meant, and it shouldn't guess."
 2. **Explain.** "A WatchOperation hands this Cache to a model on this laptop. It may write one annotation, and plain Python enforces that, not the prompt." / "It reads the same objects I just read: CC-4171 doesn't exist, CC-4711 belongs to payments, like payments-api. It explained. Nothing changed."
-3. **Consent.** "I agree with it. But I don't type the fix. I grant consent, the Kubernetes way: one label." / "The remediation controller only watches Caches with that label. Without it, it can't even run."
-4. **Patch.** "Now the AI may propose a change. The fence checks it: only costCenter, only to a cost center that exists, only with consent." / "Who wrote what: I wrote spec and label, the AI one field and its notes, the controller status. One Cache, three writers."
-5. **Reconcile.** "From here it's boring on purpose: the composition finds the cost center, renders a real Valkey, the Cache goes Ready." / "AI thinks. A human consents. The controller reconciles."
+3. **Approve.** "I agree with it. But I don't type the fix. I approve it, the Kubernetes way: one label." / "The remediation controller only watches Caches with that label. Without it, it can't even run."
+4. **Patch.** "Now the AI may propose a change. The fence checks it: only costCenter, only to a cost center that exists, only with approval." / "Who wrote what: I wrote spec and label, the AI one field and its notes, the controller status. One Cache, three writers."
+5. **Reconcile.** "From here it's boring on purpose: the composition finds the cost center, renders a real Valkey, the Cache goes Ready." / "AI thinks. A human approves. The controller reconciles."
 
 ## Timings
 
 Measured on 3 October 2026 on this MacBook Pro (M4 Max, colima 4 CPU / 8 GB), model `qwen3:30b-a3b-instruct-2507` (Q4_K_M), three back-to-back unattended runs (`./demo.sh rehearse 3`) with the cluster cut off from the internet (`./demo.sh airplane on`):
 
-| Run | Reset | Reset → diagnosis | Consent → patch | Reset → Ready |
+| Run | Reset | Reset → diagnosis | Approve → patch | Reset → Ready |
 |---|---|---|---|---|
 | 1 | 2.2 s | 5.6 s | 4.4 s | 10.7 s |
 | 2 | 2.3 s | 5.7 s | 4.4 s | 10.3 s |
@@ -71,8 +71,8 @@ Every wait has a spinner and a timeout. In the guided flow, a timed-out beat ask
 | Symptom | Check | Fix |
 |---|---|---|
 | Explain or Patch spins past 30 s | `curl -s 127.0.0.1:11434/api/ps` (is the model loaded?) and `tail .run/ollama.log` | `./demo.sh reset` (restarts Ollama if needed and warms the model). On stage: switch to the recording. |
-| Patch times out and shows "The fence rejected the proposal" | the message says why (for example a model that picked a cost center not in the registry) | `kubectl label cache demo-stuck allow-auto-remediation-`, then `./demo.sh consent` again. This makes a good talking point too. |
-| Nothing at all happens after the label | `kubectl get operations` and `kubectl get watchoperations` | `./demo.sh reset`, then rerun from `./demo.sh consent` |
+| Patch times out and shows "The fence rejected the proposal" | the message says why (for example a model that picked a cost center not in the registry) | `kubectl label cache demo-stuck allow-auto-remediation-`, then `./demo.sh approve` again. This makes a good talking point too. |
+| Nothing at all happens after the label | `kubectl get operations` and `kubectl get watchoperations` | `./demo.sh reset`, then rerun from `./demo.sh approve` |
 | Preflight says "cluster cannot reach Ollama" | `docker exec devopsdays-control-plane curl -s 192.168.5.2:11434/api/version` | Ollama is down or colima restarted with a new address: `./demo.sh reset`, or `./demo.sh up` (idempotent) |
 | Anything else | `./demo.sh status` | `./demo.sh reset` (seconds); the last resort is the recording |
 
@@ -96,17 +96,17 @@ The backup recording is `recording/demo.cast` (one clean guided run, 92×30, abo
    matchLabels allow-auto-remediation=true)        Valkey Deployment + Service : Ready
    1 gate      function-python  (ask the model?)   not found → nothing, Ready=False,
    2 think     function-openai → Ollama on Mac      condition + Warning event
-   3 fence     function-python  (allowlist, registry, consent, dedupe) → server-side apply
+   3 fence     function-python  (allowlist, registry, approval, dedupe) → server-side apply
    (1 = gate: function-python decides whether the model needs to be asked at all)
 ```
 
 - **The model runs on the Mac, not in the cluster.** Ollama is bound to `127.0.0.1:11434` (so it isn't reachable from the venue network) and runs on the Mac's GPU. The kind node reaches the Mac's loopback through colima at `192.168.5.2`, and the in-cluster Service `llm/ollama` points there. `llm/Modelfile` sets the base model plus output-length and context limits, because function-openai sends neither.
 - **The fence** (`functions/fence.py`) throws away whatever the AI step produced and rebuilds a minimal server-side-apply patch from an allowlist:
   - **diagnose** may set the diagnosis annotation only.
-  - **remediate** may set `spec.parameters.costCenter` only, to a code that exists in the registry, with the consent label present on the live object and a diagnosis already recorded.
+  - **remediate** may set `spec.parameters.costCenter` only, to a code that exists in the registry, with the approval label present on the live object and a diagnosis already recorded.
   - Anything else (another field, another resource, a different Cache) rejects the whole proposal, with a Warning event on the Cache.
   - The fence owns timestamps and de-duplication, and never fails the Operation: a failed Operation is retried and, under `Forbid`, blocks new runs.
-- **The gate** (`functions/fence.py`, first step) decides whether the model needs to be asked at all. A WatchOperation starts an Operation on every change to the Cache, including Crossplane's own bookkeeping writes, about ten of them while a Cache converges. The model is called only for a settled state that hasn't been explained yet, or for a remediation that has consent, a recorded diagnosis and something to fix.
+- **The gate** (`functions/fence.py`, first step) decides whether the model needs to be asked at all. A WatchOperation starts an Operation on every change to the Cache, including Crossplane's own bookkeeping writes, about ten of them while a Cache converges. The model is called only for a settled state that hasn't been explained yet, or for a remediation that is approved, has a recorded diagnosis and has something to fix.
   - Crossplane 2.4 has no "nothing to do" result, so a gate that says no ends the run with a fatal result. Those Operations show as Failed ("failure limit of 1 reached"); nothing is applied and the model is not called.
   - "State" means `costCenter/sku/CostCenterResolved/Ready`, not the resourceVersion.
 - **Staleness.** Crossplane fetches the watched resource separately for each pipeline step, so the fence can see a newer Cache than the model saw. The gate records the state the model is about to see in the pipeline context, and the diagnose fence drops text about a state that has since changed.
@@ -136,14 +136,14 @@ The unreleased branch `fix-selfhosted-issues` of function-openai fixes most of t
 - **Gate and fence unit tests** (`tests/fence/`, 36 tests, run in a Python 3.13 container with the same SDK as function-python):
   - good diagnosis and remediation patches, and a full-object echo
   - a diagnosis that also patches `costCenter`
-  - the AI granting itself consent
+  - the AI granting itself approval
   - a `sku` change, an unknown cost center, a malformed cost center
   - a proposal touching a Secret, and one touching another Cache
-  - no consent, no diagnosis yet, already fixed
+  - no approval, no diagnosis yet, already fixed
   - a deleted Cache, empty model output
   - a fence bug (applies nothing, never fails the Operation)
   - stale snapshots
-  - the gate: already diagnosed, converging, bookkeeping-only changes, no consent, no diagnosis, nothing to fix
+  - the gate: already diagnosed, converging, bookkeeping-only changes, no approval, no diagnosis, nothing to fix
 - **Composition render tests** (`tests/composition/run.sh`, `crossplane composition render`): with and without a matching CostCenter.
 
 ## Layout

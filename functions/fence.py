@@ -29,7 +29,7 @@ DIAGNOSIS = f"{GROUP}/diagnosis"
 LAST_DIAGNOSED = f"{GROUP}/last-diagnosed"
 DIAGNOSED_STATE = f"{GROUP}/diagnosed-state"
 AUTO_REMEDIATED = f"{GROUP}/auto-remediated"
-CONSENT_LABEL = "allow-auto-remediation"
+APPROVAL_LABEL = "allow-auto-remediation"
 
 # Declared as a step requirement in the remediate Operation: every CostCenter.
 COST_CENTERS = "cost-centers"
@@ -128,8 +128,8 @@ def needless(mode: str, watched: dict | None, codes: list[str]) -> str:
         if annotations(watched).get(DIAGNOSED_STATE) == state(watched):
             return f"already diagnosed {state(watched)}"
         return converging(watched)
-    if (meta.get("labels") or {}).get(CONSENT_LABEL) != "true":
-        return f"no consent label {CONSENT_LABEL}=true"
+    if (meta.get("labels") or {}).get(APPROVAL_LABEL) != "true":
+        return f"not approved: label {APPROVAL_LABEL}=true is not set"
     if not annotations(watched).get(DIAGNOSIS):
         return "no diagnosis yet: explain before acting"
     current = watched.get("spec", {}).get("parameters", {}).get("costCenter")
@@ -254,10 +254,10 @@ def judge_diagnosis(watched: dict, proposal: dict, now) -> Verdict:
 
 
 def judge_remediation(watched: dict, proposal: dict, codes: list[str], now) -> Verdict:
-    if watched["metadata"].get("labels", {}).get(CONSENT_LABEL) != "true":
+    if watched["metadata"].get("labels", {}).get(APPROVAL_LABEL) != "true":
         # Not an AI misstep: the watch's label filter already excludes such
         # Caches, except for the one run triggered by removing the label.
-        return Verdict("skip", f"no consent: label {CONSENT_LABEL}=true is not set")
+        return Verdict("skip", f"not approved: label {APPROVAL_LABEL}=true is not set")
     if not annotations(watched).get(DIAGNOSIS):
         return Verdict("reject", "no diagnosis recorded yet: explain before acting")
 
@@ -276,7 +276,7 @@ def judge_remediation(watched: dict, proposal: dict, codes: list[str], now) -> V
     patch = skeleton(watched)
     patch["spec"] = {"parameters": {"costCenter": proposed}}
     patch["metadata"]["annotations"] = {AUTO_REMEDIATED: f"{stamp(now)}: costCenter {current} → {proposed}"}
-    return Verdict("approve", f"spec.parameters.costCenter {current} → {proposed} (in registry, consent label present)", patch)
+    return Verdict("approve", f"spec.parameters.costCenter {current} → {proposed} (in registry, approved by label)", patch)
 
 
 def diff(proposal: dict, watched: dict, path: tuple = ()) -> set[tuple]:

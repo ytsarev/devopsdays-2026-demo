@@ -3,7 +3,7 @@
 # "Let AI Think. Let Controllers Reconcile." DevOpsDays Prague 2026 demo.
 #
 # Fully local: kind + Crossplane v2.4 + function-openai -> Ollama on this Mac.
-# The AI explains and proposes; a deterministic fence checks; a human consents
+# The AI explains and proposes; a deterministic fence checks; a human approves
 # with a label; the Cache controller converges. The AI never touches anything
 # but the API.
 #
@@ -11,7 +11,7 @@
 #   ./demo.sh up            # one-time setup, needs network (run before the talk)
 #   ./demo.sh               # guided talk: preflight, then 5 beats, ENTER between steps
 #   ./demo.sh reset         # back to the start state
-#   ./demo.sh <beat>        # stuck | explain | consent | patch | reconcile | off
+#   ./demo.sh <beat>        # stuck | explain | approve | patch | reconcile | off
 #   ./demo.sh fence         # Q&A: bad proposals bounce off the fence and the schema
 #   ./demo.sh status        # preflight checklist only
 #   ./demo.sh rehearse [N]  # N unattended full runs with timings (default 1)
@@ -53,7 +53,7 @@ MODEL="cache-sre"                       # built from llm/Modelfile
 
 CACHE="demo-stuck"
 NS="default"
-CONSENT="allow-auto-remediation"
+APPROVAL="allow-auto-remediation"     # the label that approves auto-remediation
 A="cache.demo.example.org"              # annotation prefix
 
 AUTO_SLEEP=""
@@ -170,7 +170,6 @@ YQ_SPEC_STATUS='{"spec": {"parameters": .spec.parameters},
     | pick(["type", "status", "reason", "message"]) | del(.[] | select(. == null))]}}'
 YQ_DIAGNOSED='{"metadata": {"annotations": (.metadata.annotations | with_entries(select(.key | test("/(diagnosis|last-diagnosed)$"))))},
   "spec": {"parameters": .spec.parameters}}'
-YQ_LABELS='{"metadata": {"labels": .metadata.labels}}'
 YQ_PATCHED='{"metadata": {"labels": .metadata.labels,
     "annotations": (.metadata.annotations | with_entries(select(.key | test("/auto-remediated$"))))},
   "spec": {"parameters": .spec.parameters}}'
@@ -190,6 +189,13 @@ yaml_view() {
       }
       print ind line
     }' | sed -E "s/^( *)(- )?([A-Za-z0-9._/-]+):( |\$)/\1\2${CYAN}\3${RESET}:\4/"
+}
+
+# `kubectl get watchoperation -o yaml`, trimmed to what it watches.
+show_watch() {
+  echo_cmd "kubectl get watchoperation $1 -o yaml"
+  k get watchoperation "$1" -o yaml | yq '{"spec": {"watch": .spec.watch}}' | yaml_view
+  note "(showing spec.watch)"
 }
 
 # `kubectl get cache -o yaml`, trimmed to the fields a beat is about.
@@ -431,9 +437,9 @@ cmd_status() {
   else bad "Ollama not running (./demo.sh reset starts it)"; fail=1; fi
   if docker exec "${NODE}" curl -fsS -m 3 "http://$(host_ip):11434/api/version" >/dev/null 2>&1; then ok "cluster reaches Ollama"; else bad "cluster cannot reach Ollama"; fail=1; fi
   local cc label ready
-  cc=$(cache_json | jq -r '.spec.parameters.costCenter // empty'); label=$(cache_json | jq -r --arg l "${CONSENT}" '.metadata.labels[$l] // empty'); ready=$(cond Ready)
+  cc=$(cache_json | jq -r '.spec.parameters.costCenter // empty'); label=$(cache_json | jq -r --arg l "${APPROVAL}" '.metadata.labels[$l] // empty'); ready=$(cond Ready)
   if [[ "${cc}" == "CC-4171" && -z "${label}" && "${ready}" != "True" ]]; then
-    ok "start state: ${CACHE} costCenter=CC-4171, no consent label, not Ready"
+    ok "start state: ${CACHE} costCenter=CC-4171, no approval label, not Ready"
   else
     bad "not at start state (costCenter=${cc:-none} label=${label:-none} Ready=${ready:-none})"; fail=2
   fi
@@ -486,26 +492,33 @@ beat_explain() {
   punchline "AI reasons and explains. It wrote an annotation; the spec is untouched."
 }
 
-beat_consent() {
-  banner "3 · Consent"
-  say "I agree with it. But I don't type the fix. I grant consent, the Kubernetes way: one label."
+beat_approve() {
+  banner "3 · Approve"
+  say "I agree with it. But I don't type the fix. I approve it, the Kubernetes way: one label."
   say "The remediation controller only watches Caches with that label. Without it, it can't even run."
-  kshow label cache "${CACHE}" "${CONSENT}=true"
+  beat "The gate is in the API: remediate-caches' selector"
+  show_watch remediate-caches
   echo
-  show_yaml "${YQ_LABELS}" "metadata.labels"
+  note "What the selector matches right now:"
+  kshow get caches -l "${APPROVAL}=true"
   echo
-  note "remediate-caches only watches Caches with ${CONSENT}=true:"
+  pause
+  beat "Approval: one label"
+  kshow label cache "${CACHE}" "${APPROVAL}=true"
+  echo
+  kshow get caches -l "${APPROVAL}=true"
+  echo
   show_watchops
-  punchline "Consent is a label in the API, not a sentence in a prompt."
+  punchline "Approval is a label in the API, not a sentence in a prompt."
 }
 
 beat_patch() {
   banner "4 · Patch"
-  say "Now the AI may propose a change. The fence checks it: only costCenter, only to a cost center that exists, only with consent."
+  say "Now the AI may propose a change. The fence checks it: only costCenter, only to a cost center that exists, only with approval."
   say "Who wrote what: I wrote spec and label, the AI one field and its notes, the controller status. One Cache, three writers."
   if ! wait_for 90 "AI proposal + fence" has_remediation; then
     fence_rejected && { beat "The fence rejected the proposal"; fence_events Warning | tail -2 | cut -f3 | wrap; }
-    note "Retry: ./demo.sh consent · Logs: kubectl get operations · Fall back to the recording"
+    note "Retry: ./demo.sh approve · Logs: kubectl get operations · Fall back to the recording"
     return 1
   fi
   echo
@@ -524,7 +537,7 @@ beat_patch() {
 beat_reconcile() {
   banner "5 · Reconcile"
   say "From here it's boring on purpose: the composition finds the cost center, renders a real Valkey, the Cache goes Ready."
-  say "AI thinks. A human consents. The controller reconciles."
+  say "AI thinks. A human approves. The controller reconciles."
   wait_for 60 "Cache Ready" is_ready || { note "Check: crossplane resource trace cache/${CACHE}"; return 1; }
   echo
   kshow get cache "${CACHE}"
@@ -539,17 +552,17 @@ beat_reconcile() {
   beat "A real cache, on this laptop"
   echo_cmd "kubectl exec deploy/${CACHE}-valkey -- valkey-cli ping"
   echo "  ${GREEN}$(k exec -n "${NS}" "deploy/${CACHE}-valkey" -- valkey-cli ping 2>&1)${RESET}"
-  punchline "AI thinks. A human consents. The controller reconciles."
+  punchline "AI thinks. A human approves. The controller reconciles."
 }
 
 beat_off() {
   banner "Off switch"
   say "And the off switch is just removing the label. The remediation controller no longer sees this Cache."
-  kshow label cache "${CACHE}" "${CONSENT}-"
+  kshow label cache "${CACHE}" "${APPROVAL}-"
   echo
   note "What remediate-caches can see now:"
-  kshow get caches -l "${CONSENT}=true"
-  punchline "Revoking consent is one label. Auditable, testable, deterministic."
+  kshow get caches -l "${APPROVAL}=true"
+  punchline "Revoking approval is one label. Auditable, testable, deterministic."
 }
 
 # ---------------------------------------------------------------------------
@@ -566,7 +579,7 @@ cmd_fence() {
   pause
   beat "Guardrail 2: the fence. Three bad proposals, same fence as remediate-caches."
   note "A canned fake-ai step stands in for a misbehaving model."
-  note "Target: qa/demo-rogue (stuck, consented, diagnosed)."
+  note "Target: qa/demo-rogue (stuck, approved, diagnosed)."
   local name
   for name in sku registry hostile; do
     k delete operation "fence-demo-${name}" --ignore-not-found >/dev/null
@@ -612,14 +625,14 @@ cmd_rehearse() {
     local tr; tr=$(since "${t0}")
     wait_for 120 "diagnosis" has_diagnosis || { bad "run ${r}: no diagnosis"; return 1; }
     t_diag=$(since "${t0}")
-    k label cache "${CACHE}" -n "${NS}" "${CONSENT}=true" >/dev/null
+    k label cache "${CACHE}" -n "${NS}" "${APPROVAL}=true" >/dev/null
     local tc; tc=$(now)
     wait_for 120 "remediation" has_remediation || { bad "run ${r}: no remediation"; fence_events | tail -2; return 1; }
     t_patch=$(since "${tc}")
     wait_for 60 "Ready" is_ready || { bad "run ${r}: not Ready"; return 1; }
     t_ready=$(since "${t0}")
-    k label cache "${CACHE}" -n "${NS}" "${CONSENT}-" >/dev/null
-    echo "  reset ${tr}s · diagnosis +${t_diag}s · consent→patch ${t_patch}s · reset→Ready ${t_ready}s"
+    k label cache "${CACHE}" -n "${NS}" "${APPROVAL}-" >/dev/null
+    echo "  reset ${tr}s · diagnosis +${t_diag}s · approve→patch ${t_patch}s · reset→Ready ${t_ready}s"
     echo "  diagnosis: $(ann diagnosis)" | cut -c1-200
     echo "  $(ann auto-remediated)"
     echo "run=${r} reset=${tr} diagnosis=${t_diag} patch=${t_patch} ready=${t_ready} model=$(model_base)" >> "${RUN}/timings.log"
@@ -680,8 +693,8 @@ cmd_all() {
   fi
   echo; pause "ENTER to start: 1 · Stuck"
   run_beat beat_stuck     "2 · Explain"
-  run_beat beat_explain   "3 · Consent"
-  run_beat beat_consent   "4 · Patch"
+  run_beat beat_explain   "3 · Approve"
+  run_beat beat_approve   "4 · Patch"
   run_beat beat_patch     "5 · Reconcile"
   run_beat beat_reconcile "off switch"
   run_beat beat_off       ""
@@ -697,7 +710,7 @@ case "${1:-all}" in
   build)      cmd_build ;;
   stuck)      beat_stuck ;;
   explain)    beat_explain ;;
-  consent)    beat_consent; pause "next: 4 · Patch"; beat_patch ;;
+  approve|consent) beat_approve; pause "next: 4 · Patch"; beat_patch ;;
   patch)      beat_patch ;;
   reconcile)  beat_reconcile ;;
   off)        beat_off ;;

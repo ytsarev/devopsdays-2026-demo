@@ -1,4 +1,4 @@
-# Beat 4: patch. Only Caches carrying the consent label are watched at all;
+# Beat 4: patch. Only Caches carrying the approval label are watched at all;
 # the fence checks the label again, plus the registry, before applying.
 apiVersion: ops.crossplane.io/v1alpha1
 kind: WatchOperation
