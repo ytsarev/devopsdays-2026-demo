@@ -123,7 +123,7 @@
 
   <rect x="830" y="330" width="330" height="120" rx="10" fill="#ede9fe" stroke="#7c3aed" stroke-width="1.5"/>
   <text x="846" y="354" font-size="14" class="b">Composition <tspan class="mono" font-size="13">cache</tspan></text>
-  <text x="846" y="373" font-size="12" style="fill:#6d28d9">function-python · the controller</text>
+  <text x="846" y="373" font-size="12" style="fill:#6d28d9">embedded Python function · the controller</text>
   <text x="846" y="398" font-size="12">cost center found → compose Valkey, Ready</text>
   <text x="846" y="418" font-size="12">not found → compose nothing, not Ready</text>
   <text x="846" y="438" font-size="12" class="muted">and say why: a condition and an event</text>
@@ -149,5 +149,5 @@
   <text x="482" y="650" font-size="12">deterministic code: gate, fence</text>
   <circle cx="720" cy="646" r="6" fill="#7c3aed"/>
   <text x="732" y="650" font-size="12">the Crossplane controller</text>
-  <text x="40" y="680" font-size="12" class="muted">kind · Crossplane v2.4 · function-openai → local Ollama · no cloud, no internet during the demo</text>
+  <text x="40" y="680" font-size="12" class="muted">a Crossplane project: kind · Crossplane v2.4 · embedded Python functions · function-openai → local Ollama · no cloud, no internet during the demo</text>
 </svg>

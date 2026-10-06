@@ -1,0 +1,10 @@
+# The compose-cache function exactly as `crossplane project build` packages it:
+# run.sh loads _output/devopsdays.xpkg into Docker, and render uses that image.
+apiVersion: pkg.crossplane.io/v1
+kind: Function
+metadata:
+  name: devopsdays-democompose-cache
+  annotations:
+    render.crossplane.io/runtime-docker-pull-policy: Never
+spec:
+  package: example.com/devopsdays/demo_compose-cache:arm64

@@ -4,19 +4,21 @@ Every bad proposal must be rejected or skipped, and nothing but the allowlisted
 fields may ever reach the API server.
 """
 
+import asyncio
 import copy
 import datetime
-import importlib.util
 import pathlib
+import sys
 
 import pytest
 from crossplane.function import resource, response
 from crossplane.function.proto.v1 import run_function_pb2 as fnv1
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-spec = importlib.util.spec_from_file_location("fence", ROOT / "functions" / "fence.py")
-fence = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(fence)
+# The embedded function's package: functions/fence/function/{fence,fn}.py
+sys.path.insert(0, str(ROOT / "functions" / "fence"))
+from function import fence  # noqa: E402
+from function import fn  # noqa: E402
 
 NOW = datetime.datetime(2026, 10, 5, 9, 30, 0, tzinfo=datetime.timezone.utc)
 API = "cache.demo.example.org/v1alpha1"
@@ -389,3 +391,37 @@ def test_diagnosis_of_the_state_the_model_saw_is_applied():
 def test_remediation_is_judged_against_the_live_cache_not_the_snapshot():
     caches, _, _ = run("remediate", watched(**APPROVED), [cache_patch(parameters={"costCenter": "CC-4711"})], seen="something else")
     assert caches[0]["spec"]["parameters"]["costCenter"] == "CC-4711"
+
+
+# --- the runner: the step input picks the role ----------------------------------
+
+
+def run_step(step_input, w=None, proposals=()):
+    req = fnv1.RunFunctionRequest()
+    req.input.update(step_input)
+    if w is not None:
+        req.required_resources["ops.crossplane.io/watched-resource"].items.add().resource.update(w)
+    for i, p in enumerate(proposals):
+        req.desired.resources[f"ai-{i}"].resource.update(p)
+    return asyncio.run(fn.FunctionRunner().RunFunction(req, None))
+
+
+def step(role, operation):
+    return {"apiVersion": "fence.demo.example.org/v1alpha1", "kind": "Input", "step": role, "operation": operation}
+
+
+def test_runner_plays_the_gate():
+    rsp = run_step(step("gate", "diagnose"), watched())
+    assert resource.struct_to_dict(rsp.context)[fence.SNAPSHOT] == {"state": "CC-4171/s/False/False"}
+
+
+def test_runner_plays_the_fence():
+    rsp = run_step(step("fence", "diagnose"), watched(), [cache_patch(annotations={DIAG: "CC-4171 doesn't exist."})])
+    assert [r.message for r in rsp.results][-1].startswith("fence/diagnose: approved")
+
+
+@pytest.mark.parametrize("bad", [step("guess", "diagnose"), step("fence", "delete-everything"), {}])
+def test_runner_refuses_an_unknown_role(bad):
+    rsp = run_step(bad, watched())
+    assert rsp.results[-1].severity == fnv1.SEVERITY_FATAL
+    assert len(rsp.desired.resources) == 0

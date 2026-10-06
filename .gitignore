@@ -1,7 +1,11 @@
 # Downloaded tools and model weights (./demo.sh up fetches them)
 .tools/
 .models/
-# Runtime state, generated manifests, cluster credentials
+# Runtime state, generated manifests and schemas, build output, cluster credentials
 .run/
 .build/
 .kubeconfig
+schemas/
+_output/
+.registry/
+__pycache__/

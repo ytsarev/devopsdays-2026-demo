@@ -19,14 +19,15 @@ spec:
       pipeline:
         - step: gate
           functionRef:
-            name: function-python
+            name: devopsdays-demofence
           input:
-            apiVersion: python.fn.crossplane.io/v1beta1
-            kind: Script
-            script: '# injected from functions/fence.py with MODE = gate-diagnose'
+            apiVersion: fence.demo.example.org/v1alpha1
+            kind: Input
+            step: gate
+            operation: diagnose
         - step: think
           functionRef:
-            name: function-openai
+            name: upbound-function-openai
           credentials:
             - name: gpt
               source: Secret
@@ -59,8 +60,9 @@ spec:
               {{ .Resources }}
         - step: fence
           functionRef:
-            name: function-python
+            name: devopsdays-demofence
           input:
-            apiVersion: python.fn.crossplane.io/v1beta1
-            kind: Script
-            script: "# injected from functions/fence.py with MODE = diagnose"
+            apiVersion: fence.demo.example.org/v1alpha1
+            kind: Input
+            step: fence
+            operation: diagnose

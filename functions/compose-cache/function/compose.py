@@ -1,8 +1,6 @@
 """Composition logic for Cache: resolve the cost center, then compose a local Valkey.
 
 No valid cost center, no infrastructure.
-
-Runs inside function-python. demo.sh injects this file into the Composition.
 """
 
 from crossplane.function import request, resource, response

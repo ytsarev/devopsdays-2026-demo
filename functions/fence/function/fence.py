@@ -1,6 +1,7 @@
 """Deterministic steps around the AI step: the gate before it, the fence after it.
 
-Both WatchOperations run   gate -> think (function-openai) -> fence.
+Both WatchOperations run   gate -> think (function-openai) -> fence,
+where gate and fence are this function with different inputs.
 
 gate   decides whether the model needs to be asked at all. Crossplane 2.4 has no
        "nothing to do" result, so a gate that says no ends the run with a fatal
@@ -10,8 +11,8 @@ gate   decides whether the model needs to be asked at all. Crossplane 2.4 has no
 fence  throws away whatever the AI step produced and rebuilds the patch from an
        allowlist, or applies nothing. It never returns a fatal result.
 
-demo.sh appends `MODE = "<mode>"` when it injects this file into a pipeline
-step: gate-diagnose, gate-remediate, diagnose or remediate. Tests call gate()
+Each pipeline step says which role to play in its input, for example
+`step: gate` and `operation: diagnose` (see function/fn.py). Tests call gate()
 and fence() directly.
 """
 
@@ -63,13 +64,6 @@ IGNORED_PREFIXES = {
 
 
 SNAPSHOT = f"{GROUP}/snapshot"
-
-
-def operate(req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse):
-    if MODE.startswith("gate-"):  # noqa: F821 - MODE is appended by demo.sh
-        gate(MODE.removeprefix("gate-"), req, rsp)  # noqa: F821
-    else:
-        fence(MODE, req, rsp)  # noqa: F821
 
 
 def state(obj: dict) -> str:

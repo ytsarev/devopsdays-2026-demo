@@ -1,0 +1,24 @@
+apiVersion: dev.crossplane.io/v1alpha1
+kind: Project
+metadata:
+  name: devopsdays
+spec:
+  architectures:
+    - amd64
+    - arm64
+  dependencies:
+    - type: xpkg
+      xpkg:
+        apiVersion: pkg.crossplane.io/v1
+        kind: Function
+        package: xpkg.upbound.io/upbound/function-openai
+        version: sha256:99e9c7c7b1b951bf6fe146d8179c2a8a80a2d6fad7b702fa11ffa6b8e64ced99
+  description: Let AI Think. Let Controllers Reconcile. A fully local Crossplane demo.
+  license: Apache-2.0
+  paths:
+    apis: apis
+    examples: examples
+    functions: functions
+    operations: .no-packaged-operations
+    tests: tests
+  repository: example.com/devopsdays/demo

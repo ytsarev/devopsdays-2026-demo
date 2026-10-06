@@ -1,5 +1,7 @@
-# Cache composition. The script comes from functions/compose_cache.py;
-# demo.sh injects it (see `./demo.sh build`).
+# Cache composition. The step runs the project's embedded Python function
+# functions/compose-cache, which `crossplane project build` packages as
+# devopsdays-democompose-cache (the CLI derives the name from spec.repository
+# in crossplane-project.yaml).
 apiVersion: apiextensions.crossplane.io/v1
 kind: Composition
 metadata:
@@ -10,15 +12,11 @@ spec:
     kind: Cache
   mode: Pipeline
   pipeline:
-  - step: compose
+  - step: compose-cache
     functionRef:
-      name: function-python
+      name: devopsdays-democompose-cache
     requirements:
       requiredResources:
       - requirementName: cost-centers
         apiVersion: registry.demo.example.org/v1alpha1
         kind: CostCenter
-    input:
-      apiVersion: python.fn.crossplane.io/v1beta1
-      kind: Script
-      script: "# injected from functions/compose_cache.py"
