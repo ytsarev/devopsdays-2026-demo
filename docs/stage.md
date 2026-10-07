@@ -46,18 +46,18 @@ Then turn Wi-Fi off and run `./demo.sh` once more. Leave colima and the cluster 
 
 ## Timings
 
-Measured on 3 October 2026 on a MacBook Pro (M4 Max, colima 4 CPU / 8 GB) with model `qwen3:30b-a3b-instruct-2507` (Q4_K_M). Three back-to-back unattended runs (`./demo.sh rehearse 3`), with the cluster cut off from the internet (`./demo.sh airplane on`):
+Measured on 7 October 2026 on a MacBook Pro (M4 Max, colima 4 CPU / 8 GB) with model `qwen3:30b-a3b-instruct-2507` (Q4_K_M), on the cluster `crossplane project run` creates. Three back-to-back unattended runs (`./demo.sh rehearse 3`), with the cluster cut off from the internet (`./demo.sh airplane on`):
 
 | Run | Reset | Reset → diagnosis | Approve → patch | Reset → Ready |
 |---|---|---|---|---|
-| 1 | 2.2 s | 5.6 s | 4.4 s | 10.7 s |
-| 2 | 2.3 s | 5.7 s | 4.4 s | 10.3 s |
-| 3 | 1.7 s | 9.9 s | 4.9 s | 15.6 s |
+| 1 | 2.1 s | 10.5 s | 4.5 s | 16.2 s |
+| 2 | 3.0 s | 9.1 s | 4.9 s | 15.8 s |
+| 3 | 3.1 s | 8.6 s | 5.5 s | 14.8 s |
 
 - **Model calls:** each takes 3.5–5 s; the prompt is about 5,000 tokens (see [design.md](design.md)).
 - **Calls per run:** two, one diagnosis and one remediation, and sometimes a third for the "healthy" re-diagnosis.
 - **Ready:** follows the patch within about a second, because Valkey's image is preloaded.
-- **`./demo.sh up`:** about 10 s on an existing setup; from nothing it's dominated by downloads (the model is 18.6 GB).
+- **`./demo.sh up`:** about 10 s when nothing in the project changed; about 3 minutes when it has to rebuild the embedded functions (`crossplane project run` builds them for amd64 and arm64); from nothing it's dominated by downloads (the model is 18.6 GB).
 - **Smaller fallback model:** `./demo.sh model qwen3:4b-instruct-2507-q4_K_M` (2.5 GB) gives the same timings, but a vaguer diagnosis.
 - **Log:** `.run/timings.log` collects every rehearsal.
 

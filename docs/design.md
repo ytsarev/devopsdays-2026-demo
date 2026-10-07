@@ -4,19 +4,21 @@
 
 ## Pieces
 
+The repository is a Crossplane project (`crossplane-project.yaml`). `crossplane project build` turns it into a Configuration package plus one Function package per embedded function, and `crossplane project run` installs it on a local kind cluster with its own OCI registry.
+
 - **The Cache API.** `apis/cache/definition.yaml` defines `Cache` (`cache.demo.example.org/v1alpha1`). Its schema requires `costCenter` to match `^CC-[0-9]{4}$`.
-- **The composition** (`functions/compose_cache.py`, function-python) looks the cost center up in the CostCenter registry.
+- **The composition** (`apis/cache/composition.yaml`) runs the embedded Python function `functions/compose-cache`, which looks the cost center up in the CostCenter registry.
   - **Found:** it composes a ConfigMap, a Valkey Deployment and a Service.
   - **Not found:** it composes nothing, sets the `CostCenterResolved=False` condition, emits a Warning event, and explicitly keeps the Cache not Ready. With zero composed resources, Crossplane would otherwise report the Cache as Ready.
   - It writes the known cost centers into `status.costCenter.known`, so the model can see them.
-- **Two WatchOperations** (`operations/`) run the pipeline `gate → think → fence`:
+- **Two WatchOperations** (`ai/`) run the pipeline `gate → think → fence`. They are applied by `demo.sh`, not packaged: `reset` deletes and re-creates them around the Cache, and Crossplane's package manager would put packaged ones back.
   - `diagnose-caches` watches every Cache in `default`.
   - `remediate-caches` watches only Caches labelled `allow-auto-remediation=true`.
 - **The model runs on the Mac, not in the cluster.** Ollama is bound to `127.0.0.1:11434`, so it isn't reachable from the venue network, and runs on the Mac's GPU. The kind node reaches the Mac's loopback through colima at `192.168.5.2`, and the in-cluster Service `llm/ollama` points there. `llm/Modelfile` sets the base model plus output-length and context limits, because function-openai sends neither.
 
 ## The gate and the fence
 
-Both live in `functions/fence.py` and run in function-python. `demo.sh` appends the mode when it injects the script into each pipeline step.
+Both are the embedded Python function `functions/fence`; each pipeline step picks the role in its input (`step: gate|fence`, `operation: diagnose|remediate`). The logic is in `functions/fence/function/fence.py`.
 
 - **The fence** throws away whatever the AI step produced and rebuilds a minimal server-side-apply patch from an allowlist:
   - **diagnose** may set the diagnosis annotation only.
@@ -51,7 +53,7 @@ The unreleased branch `fix-selfhosted-issues` of function-openai fixes most of t
 
 `./demo.sh test` runs both suites.
 
-- **Gate and fence unit tests** (`tests/fence/`, 36 tests, run in a Python 3.13 container with the same SDK as function-python):
+- **Gate and fence unit tests** (`tests/fence/`, 41 tests, run in a Python 3.13 container with the same SDK as the embedded functions):
   - good diagnosis and remediation patches, and a full-object echo
   - a diagnosis that also patches `costCenter`
   - the AI granting itself approval
@@ -62,27 +64,44 @@ The unreleased branch `fix-selfhosted-issues` of function-openai fixes most of t
   - a fence bug (applies nothing, never fails the Operation)
   - stale snapshots
   - the gate: already diagnosed, converging, bookkeeping-only changes, no approval, no diagnosis, nothing to fix
-- **Composition render tests** (`tests/composition/run.sh`, `crossplane composition render`): with and without a matching CostCenter.
+  - the function's input: gate, fence, and an unknown role (fatal, nothing applied)
+- **Composition render tests** (`tests/composition/run.sh`, `crossplane composition render` against the compose-cache image from `crossplane project build`): with and without a matching CostCenter.
 
 ## Layout
 
 ```
-demo.sh                     everything: up, reset, beats, fence, test, rehearse, airplane, down
-apis/cache/                 XRD (schema guardrail) and Composition (script injected at build)
-functions/compose_cache.py  composition logic (function-python)
-functions/fence.py          gate + fence (function-python, MODE appended at build)
-operations/                 diagnose-caches and remediate-caches WatchOperations (prompts)
+crossplane-project.yaml     the project: repository, architectures, function-openai dependency
+apis/cache/                 XRD (schema guardrail) and Composition
+functions/compose-cache/    embedded Python function: the composition logic
+functions/fence/            embedded Python function: the gate and the fence
+functions/fake-ai/          embedded Python function: canned bad proposals for the Q&A demo
+ai/                         diagnose-caches and remediate-caches WatchOperations (prompts), applied by demo.sh
 registry/                   CostCenter CRD, three cost centers, RBAC aggregated to Crossplane
 llm/                        Modelfile, Ollama Service/EndpointSlice, function-openai Secret
-crossplane/                 Helm values (--enable-operations, persistent package cache), functions
-cluster/kind.yaml           pinned kind node image
-tests/                      fence unit tests, composition render tests, Q&A fence-demo Operations
+crossplane/                 Helm values that add Operations and a persistent package cache
+tests/                      gate and fence unit tests, composition render tests, Q&A fence-demo Operations
 examples/demo-stuck.yaml    the stuck Cache
+demo.sh                     everything: up, reset, beats, fence, test, rehearse, airplane, build, down
 docs/                       this page, the stage runbook, the architecture diagram
 ```
 
-`.tools/` (kind, ollama, asciinema), `.models/` (model weights), `.run/` (logs, timings), `.build/` and `.kubeconfig` are generated and git-ignored. The demo uses its own kubeconfig and never changes your current kubectl context.
+Generated and git-ignored: `.tools/` (ollama, asciinema), `.models/` (model weights), `.registry/` (the local OCI registry's data), `schemas/` and `_output/` (written by the CLI), `.run/` (logs, timings) and `.kubeconfig`.
+
+## Crossplane CLI v2.5.0 project workflow: rough edges and workarounds
+
+| What happens | Workaround in this repo |
+|---|---|
+| `crossplane project run` doesn't enable Operations (alpha in Crossplane 2.4) | `demo.sh up` adds `--enable-operations` and a persistent package cache with `helm upgrade --reuse-values`; later `project run` calls keep an existing install |
+| `--crossplane-version v2.4.2` fails: the chart is cached as `crossplane-2.4.2.tgz` but looked up as `crossplane-v2.4.2.tgz` | pass `2.4.2` |
+| `project run` merges its kubeconfig into `~/.kube/config` and switches the current context, ignoring `$KUBECONFIG` | `demo.sh` remembers your context and switches back, and keeps its own copy in `.kubeconfig` |
+| Packages built for `arm64` only can't be installed: Crossplane fetches the `linux/amd64` entry of a package, even on an arm64 cluster | `spec.architectures: [amd64, arm64]`; the amd64 build is emulated (about 3 minutes for all three functions) |
+| Embedded function names drop the underscore: `<repository>_<function>` becomes `devopsdays-democompose-cache` | the Composition and WatchOperations use those names |
+| `function-openai:v0.3.10` exists on xpkg.upbound.io but is missing from its tag list, so `crossplane dependency add` can't resolve the version | the dependency is pinned by digest |
+| `project run` rebuilds every function on every run (minutes, and needs the network for apt, PyPI and `gcr.io`) | `demo.sh up` skips it when nothing under `apis/`, `functions/` or `crossplane-project.yaml` changed |
+| `crossplane composition render` in project mode rebuilds every embedded function and gives each Python build 60 s, which times out | `tests/composition/run.sh` builds once with `crossplane project build`, loads `_output/devopsdays.xpkg` into Docker, and renders against that image |
+
+The WatchOperations stay outside the package on purpose. Packaged objects are owned by Crossplane's package manager, which re-applies them, and that would fight `reset`.
 
 ## Versions
 
-Crossplane 2.4.2 (Helm chart `crossplane-stable/crossplane`), crossplane CLI 2.5.0, function-python v0.6.0, function-openai v0.3.10, kind v0.33.0 with node v1.36.4, Ollama v0.35.1, Valkey 9.1.2, asciinema 3.2.1.
+Crossplane 2.4.2 (installed by `crossplane project run`), crossplane CLI 2.5.0, crossplane-function-sdk-python 0.15.1, function-openai v0.3.10 (pinned by digest), Ollama v0.35.1, Valkey 9.1.2, asciinema 3.2.1.

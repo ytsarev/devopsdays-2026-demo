@@ -2,13 +2,14 @@
 #
 # "Let AI Think. Let Controllers Reconcile." DevOpsDays Prague 2026 demo.
 #
-# Fully local: kind + Crossplane v2.4 + function-openai -> Ollama on this Mac.
+# Fully local: a Crossplane project (kind + Crossplane v2.4, embedded Python
+# functions) + function-openai -> Ollama on this Mac.
 # The AI explains and proposes; a deterministic fence checks; a human approves
 # with a label; the Cache controller converges. The AI never touches anything
 # but the API.
 #
 # Usage:
-#   ./demo.sh up            # one-time setup, needs network (run before the talk)
+#   ./demo.sh up            # setup, needs network: model, then `crossplane project run`
 #   ./demo.sh               # guided talk: preflight, then 5 beats, ENTER between steps
 #   ./demo.sh reset         # back to the start state
 #   ./demo.sh <beat>        # stuck | explain | approve | patch | reconcile | off
@@ -18,7 +19,8 @@
 #   ./demo.sh test          # fence unit tests + composition render tests
 #   ./demo.sh model [BASE]  # show or switch the local model (rebuilds cache-sre)
 #   ./demo.sh airplane on|off  # cut the cluster off the internet (rehearse offline)
-#   ./demo.sh down          # delete the cluster, stop Ollama (models stay on disk)
+#   ./demo.sh build         # `crossplane project build` (functions + Configuration)
+#   ./demo.sh down          # `crossplane project stop`, stop Ollama (models stay on disk)
 #
 # Flags:
 #   --auto SECS             # don't wait for ENTER; sleep SECS instead (recording)
@@ -33,17 +35,16 @@ set -euo pipefail
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 TOOLS="${DIR}/.tools"
 RUN="${DIR}/.run"
-BUILD="${DIR}/.build"
-mkdir -p "${RUN}" "${BUILD}"
+mkdir -p "${RUN}"
 
-CLUSTER="devopsdays"
+CLUSTER="devopsdays"                # `crossplane project run --control-plane-name`
 KCFG="${DIR}/.kubeconfig"          # own kubeconfig: never touches ~/.kube/config
+REGISTRY_DIR="${DIR}/.registry"    # the local OCI registry's data, kept across restarts
 KCTX="kind-${CLUSTER}"
 NODE="${CLUSTER}-control-plane"
 
 CROSSPLANE_VERSION="2.4.2"
 VALKEY_IMAGE="valkey/valkey:9.1.2-alpine"
-KIND_VERSION="v0.33.0"
 OLLAMA_VERSION="v0.35.1"
 ASCIINEMA_VERSION="v3.2.1"
 
@@ -63,7 +64,7 @@ while (( $# > 0 )); do
   case "$1" in
     --auto)   AUTO_SLEEP="$2"; shift 2 ;;
     --notes)  NOTES=1; shift ;;
-    -h|--help) sed -n '3,28p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '3,30p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *)        POSITIONAL+=("$1"); shift ;;
   esac
 done
@@ -265,23 +266,72 @@ show_watchops() {
 }
 
 # ---------------------------------------------------------------------------
-# Build: inject Python into the Composition and Operations
+# The Crossplane project: build, and run on the local dev control plane
 # ---------------------------------------------------------------------------
 
+# Fingerprint of what `crossplane project run` builds and installs.
+project_sum() {
+  (cd "${DIR}" && find crossplane-project.yaml apis functions -type f ! -path '*/__pycache__/*' -print0 |
+    sort -z | xargs -0 shasum) | shasum | cut -c1-12
+}
+
+project_healthy() {
+  k get configurations -o json 2>/dev/null |
+    jq -e '[.items[].status.conditions[]? | select(.type == "Healthy" and .status == "True")] | length > 0' >/dev/null
+}
+
+# Builds the embedded Python functions, creates (or reuses) the kind cluster and
+# its local OCI registry, installs Crossplane, and installs the project's
+# Configuration with its dependencies. Python builds take minutes, so this is
+# skipped when nothing in the project changed since the last successful run.
+project_run() {
+  if [[ "$(cat "${RUN}/project.sum" 2>/dev/null)" == "$(project_sum)" ]] && project_healthy; then
+    ok "project unchanged and installed"
+    return 0
+  fi
+  # project run merges its kubeconfig into ~/.kube/config (it ignores
+  # $KUBECONFIG) and switches the current context. Remember the user's context
+  # to switch back, and keep the demo's own copy in .kubeconfig.
+  local home_kcfg="${HOME}/.kube/config" prev rc=0
+  prev=$(kubectl --kubeconfig "${home_kcfg}" config current-context 2>/dev/null || true)
+  # The version without a leading v: CLI v2.5.0 caches the chart as
+  # crossplane-2.4.2.tgz but looks for crossplane-v2.4.2.tgz when given v2.4.2.
+  (cd "${DIR}" && crossplane project run --control-plane-name "${CLUSTER}" \
+    --crossplane-version "${CROSSPLANE_VERSION}" --no-cluster-admin --registry-dir "${REGISTRY_DIR}" \
+    --timeout 15m) || rc=$?
+  if [[ -n "${prev}" ]]; then
+    kubectl --kubeconfig "${home_kcfg}" config use-context "${prev}" >/dev/null 2>&1 || true
+  fi
+  (( rc == 0 )) || die "crossplane project run failed (see above)"
+  kubectl --kubeconfig "${home_kcfg}" config view --minify --flatten --context "${KCTX}" > "${KCFG}"
+  chmod 600 "${KCFG}"
+  project_sum > "${RUN}/project.sum"
+}
+
+# `crossplane project run` installs Crossplane without Operations (alpha in
+# v2.4) and with an in-memory package cache. Add both with a Helm upgrade; later
+# project runs keep an existing install as it is.
+crossplane_operations() {
+  if k -n crossplane-system get deploy crossplane -o json 2>/dev/null |
+       jq -e '.spec.template.spec.containers[0].args | index("--enable-operations")' >/dev/null; then
+    ok "Operations already enabled"
+    return 0
+  fi
+  local chart="${HOME}/.cache/crossplane/charts/crossplane-${CROSSPLANE_VERSION}.tgz"
+  if [[ ! -f "${chart}" ]]; then
+    helm repo add crossplane-stable https://charts.crossplane.io/stable >/dev/null 2>&1 || true
+    helm repo update crossplane-stable >/dev/null
+    chart="crossplane-stable/crossplane"
+  fi
+  k apply -f "${DIR}/crossplane/package-cache-pvc.yaml" >/dev/null
+  helm upgrade crossplane "${chart}" --version "${CROSSPLANE_VERSION}" \
+    --kubeconfig "${KCFG}" --kube-context "${KCTX}" -n crossplane-system \
+    --reuse-values -f "${DIR}/crossplane/values.yaml" --wait --timeout 10m >/dev/null
+  k wait crd/watchoperations.ops.crossplane.io --for=condition=Established --timeout=120s >/dev/null
+}
+
 cmd_build() {
-  yq '.spec.pipeline[0].input.script = load_str("functions/compose_cache.py")
-      | .spec.pipeline[0].input.script style="literal"' \
-    "${DIR}/apis/cache/composition.yaml" > "${BUILD}/composition.yaml"
-  # The gate and fence steps both run functions/fence.py; MODE picks the role.
-  local m
-  for m in diagnose remediate; do
-    MODE="${m}" yq '
-        with(.spec.operationTemplate.spec.pipeline[] | select(.step == "gate") | .input.script;
-          . = load_str("functions/fence.py") + "\nMODE = \"gate-" + strenv(MODE) + "\"\n" | . style="literal")
-      | with(.spec.operationTemplate.spec.pipeline[] | select(.step == "fence") | .input.script;
-          . = load_str("functions/fence.py") + "\nMODE = \"" + strenv(MODE) + "\"\n" | . style="literal")' \
-      "${DIR}/operations/${m}-caches.yaml" > "${BUILD}/${m}-caches.yaml"
-  done
+  (cd "${DIR}" && crossplane project build)
 }
 
 # ---------------------------------------------------------------------------
@@ -327,10 +377,6 @@ cmd_model() {
 
 fetch_tools() {
   mkdir -p "${TOOLS}"
-  if [[ ! -x "${TOOLS}/kind" ]]; then
-    curl -fsSL -o "${TOOLS}/kind" "https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-darwin-arm64"
-    chmod +x "${TOOLS}/kind"
-  fi
   if [[ ! -x "${TOOLS}/ollama/ollama" ]]; then
     mkdir -p "${TOOLS}/ollama"
     curl -fsSL "https://github.com/ollama/ollama/releases/download/${OLLAMA_VERSION}/ollama-darwin.tgz" | tar -xz -C "${TOOLS}/ollama"
@@ -355,35 +401,23 @@ cmd_up() {
   ollama list | awk 'NR>1{print $1}' | grep -qx "$(model_base)" || ollama pull "$(model_base)"
   cmd_model
 
-  beat "kind cluster ${CLUSTER}"
-  if ! "${TOOLS}/kind" get clusters 2>/dev/null | grep -qx "${CLUSTER}"; then
-    "${TOOLS}/kind" create cluster --config "${DIR}/cluster/kind.yaml" --kubeconfig "${KCFG}"
-  fi
+  beat "Crossplane project: build functions, kind + local registry, Crossplane, Configuration"
+  project_run
+
+  beat "Crossplane ${CROSSPLANE_VERSION}: enable Operations, persistent package cache"
+  crossplane_operations
+  k wait xrd/caches.cache.demo.example.org --for=condition=Established --timeout=300s >/dev/null
+  k wait function --all --for=condition=Healthy --timeout=5m >/dev/null
 
   beat "Preload ${VALKEY_IMAGE} (no image pulls on stage)"
   docker image inspect "${VALKEY_IMAGE}" >/dev/null 2>&1 || docker pull -q --platform linux/arm64 "${VALKEY_IMAGE}"
   docker save --platform linux/arm64 "${VALKEY_IMAGE}" |
     docker exec -i "${NODE}" ctr --namespace=k8s.io images import --digests --snapshotter=overlayfs - >/dev/null
 
-  beat "Crossplane ${CROSSPLANE_VERSION} (Operations enabled)"
-  k create namespace crossplane-system --dry-run=client -o yaml | k apply -f - >/dev/null
-  k apply -f "${DIR}/crossplane/package-cache-pvc.yaml" >/dev/null
-  helm repo add crossplane-stable https://charts.crossplane.io/stable >/dev/null 2>&1 || true
-  helm repo update crossplane-stable >/dev/null
-  helm upgrade --install crossplane crossplane-stable/crossplane --version "${CROSSPLANE_VERSION}" \
-    --kubeconfig "${KCFG}" --kube-context "${KCTX}" -n crossplane-system \
-    -f "${DIR}/crossplane/values.yaml" --wait --timeout 10m >/dev/null
-
-  beat "Functions"
-  k apply -f "${DIR}/crossplane/functions.yaml" >/dev/null
-  k wait function --all --for=condition=Healthy --timeout=5m >/dev/null
-
-  beat "APIs, registry, composition"
-  cmd_build
-  k apply -f "${DIR}/registry/costcenter-crd.yaml" -f "${DIR}/registry/rbac.yaml" -f "${DIR}/apis/cache/definition.yaml" >/dev/null
+  beat "Cost center registry"
+  k apply -f "${DIR}/registry/costcenter-crd.yaml" -f "${DIR}/registry/rbac.yaml" >/dev/null
   k wait crd/costcenters.registry.demo.example.org --for=condition=Established --timeout=60s >/dev/null
-  k wait xrd/caches.cache.demo.example.org --for=condition=Established --timeout=120s >/dev/null
-  k apply -f "${DIR}/registry/costcenters.yaml" -f "${BUILD}/composition.yaml" >/dev/null
+  k apply -f "${DIR}/registry/costcenters.yaml" >/dev/null
 
   beat "Cluster -> Ollama on this Mac"
   sed "s/\${HOST_IP}/$(host_ip)/" "${DIR}/llm/ollama-service.yaml" | k apply -f - >/dev/null
@@ -411,14 +445,15 @@ cmd_reset() {
   # another diagnosis while the first is still with the model.
   LAST_RV=""; wait_for 15 "controller settled" is_quiet >/dev/null || true
   # Now the AI controllers: diagnose starts on the Cache right away.
-  cmd_build
-  k apply -f "${BUILD}/diagnose-caches.yaml" -f "${BUILD}/remediate-caches.yaml" >/dev/null
+  k apply -f "${DIR}/ai/diagnose-caches.yaml" -f "${DIR}/ai/remediate-caches.yaml" >/dev/null
   model_loaded || model_warm
   ok "start state: ${CACHE} costCenter=CC-4171, no label, not Ready ${DIM}($(since "${t0}")s)${RESET}"
 }
 
 cmd_down() {
-  "${TOOLS}/kind" delete cluster --name "${CLUSTER}" --kubeconfig "${KCFG}" || true
+  (cd "${DIR}" && KUBECONFIG="${KCFG}" crossplane project stop --control-plane-name "${CLUSTER}" \
+    --registry-dir "${REGISTRY_DIR}") || true
+  rm -f "${RUN}/project.sum"
   if [[ -f "${RUN}/ollama.pid" ]]; then kill "$(cat "${RUN}/ollama.pid")" 2>/dev/null || true; rm -f "${RUN}/ollama.pid"; fi
   echo "down. Models stay in .models/ (delete that folder to reclaim disk)."
 }
@@ -431,7 +466,7 @@ cmd_status() {
     ok "Crossplane ${CROSSPLANE_VERSION}, Operations enabled"
   else bad "Crossplane not ready"; fail=1; fi
   local unhealthy; unhealthy=$(k get functions -o json | jq -r '.items[] | select(.status.conditions[]? | select(.type=="Healthy" and .status!="True")) | .metadata.name')
-  if [[ -z "${unhealthy}" ]]; then ok "functions: function-python, function-openai"; else bad "unhealthy functions: ${unhealthy}"; fail=1; fi
+  if [[ -z "${unhealthy}" ]]; then ok "functions: $(k get functions -o jsonpath='{.items[*].metadata.name}' | tr ' ' ',')"; else bad "unhealthy functions: ${unhealthy}"; fail=1; fi
   if ollama_alive; then
     if model_loaded; then ok "model ${MODEL} ($(model_base)) loaded on ${OLLAMA_HOST}"; else bad "model not loaded (warming...)"; model_warm && ok "model warm"; fi
   else bad "Ollama not running (./demo.sh reset starts it)"; fail=1; fi
@@ -585,8 +620,7 @@ cmd_fence() {
     k delete operation "fence-demo-${name}" --ignore-not-found >/dev/null
   done
   k get cache demo-rogue -n qa >/dev/null 2>&1 || k apply -f "${DIR}/tests/fence-demo/rogue-cache.yaml" >/dev/null
-  cmd_build
-  "${DIR}/tests/fence-demo/render.sh" "${BUILD}" | k apply -f - >/dev/null
+  "${DIR}/tests/fence-demo/render.sh" "${DIR}" | k apply -f - >/dev/null
   sleep 1
   for name in sku registry hostile; do
     local verdict=""
@@ -605,12 +639,11 @@ cmd_fence() {
 # ---------------------------------------------------------------------------
 
 cmd_test() {
-  cmd_build
-  beat "Fence unit tests (Python 3.13, same SDK as function-python)"
+  beat "Gate and fence unit tests (Python 3.13, same SDK as the embedded functions)"
   docker image inspect devopsdays-demo-tests >/dev/null 2>&1 ||
     docker build -q -t devopsdays-demo-tests -f "${DIR}/tests/Dockerfile" "${DIR}/tests" >/dev/null
   docker run --rm -v "${DIR}:/src:ro" -e PYTHONDONTWRITEBYTECODE=1 devopsdays-demo-tests -p no:cacheprovider
-  beat "Composition render tests"
+  beat "Composition render tests (crossplane composition render, project mode)"
   "${DIR}/tests/composition/run.sh"
 }
 

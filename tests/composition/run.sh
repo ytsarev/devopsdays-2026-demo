@@ -1,14 +1,28 @@
 #!/usr/bin/env bash
-# Composition tests for Cache with `crossplane composition render` (runs
-# function-python in Docker; no cluster needed).
+# Composition tests for Cache with `crossplane composition render`, against the
+# compose-cache image `crossplane project build` produced (no cluster needed).
 #   1. costCenter matches no CostCenter -> nothing composed, Ready=False, warning.
 #   2. costCenter matches -> ConfigMap + Deployment + Service, status.endpoint set.
+#
+# Render's project mode would rebuild every embedded function and gives each
+# Python build 60 s, which isn't enough here; so build once (when the function
+# changed), load the images into Docker, and render with an explicit functions file.
 set -euo pipefail
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )/../.." && pwd )"
 T="${DIR}/tests/composition"
+XPKG="${DIR}/_output/devopsdays.xpkg"
+
+if [[ ! -f "${XPKG}" || -n "$(find "${DIR}/functions/compose-cache" "${DIR}/crossplane-project.yaml" \
+      -type f ! -path '*/__pycache__/*' -newer "${XPKG}" | head -1)" ]]; then
+  echo "  (building the project: crossplane project build)"
+  (cd "${DIR}" && crossplane project build >/dev/null)
+fi
+docker load -q -i "${XPKG}" >/dev/null
+
 render() {
-  crossplane composition render "$1" "${DIR}/.build/composition.yaml" "${DIR}/tests/functions.yaml" \
-    --required-resources "${T}/costcenters.yaml" -r 2>/dev/null
+  # Run outside the project directory, so render uses the functions file.
+  (cd "${T}" && crossplane composition render "$1" "${DIR}/apis/cache/composition.yaml" functions.yaml \
+    --required-resources costcenters.yaml -r)
 }
 fail=0
 check() { if eval "$2"; then echo "  ✔ $1"; else echo "  ✘ $1"; fail=1; fi; }

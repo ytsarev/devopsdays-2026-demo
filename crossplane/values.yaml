@@ -1,8 +1,11 @@
-# Crossplane v2.4.2 Helm values for the demo.
+# Applied with `helm upgrade --reuse-values` after `crossplane project run` has
+# installed Crossplane, which doesn't enable Operations.
 args:
+  # What `crossplane project run` sets.
+  - --enable-dependency-version-upgrades
   # Operations (Operation, CronOperation, WatchOperation) are still alpha in v2.4.
   - --enable-operations
 packageCache:
   # Persist package contents so a laptop restart without Wi-Fi does not
-  # force Crossplane to re-fetch packages from the registry.
+  # force Crossplane to re-fetch packages (function-openai comes from xpkg.upbound.io).
   pvc: crossplane-package-cache
